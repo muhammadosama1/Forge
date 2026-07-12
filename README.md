@@ -14,7 +14,13 @@ forge make Login -viper -clean
 forge make Login -tca
 ```
 
-Install locally:
+Install via Homebrew:
+
+```sh
+brew install muhammadosama1/forge/forge
+```
+
+Install locally from source:
 
 ```sh
 make install
