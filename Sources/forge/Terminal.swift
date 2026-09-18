@@ -36,21 +36,25 @@ enum Terminal {
         let fd = STDIN_FILENO
         var original = termios()
 
+        // Fetch current terminal attributes to save for restoration
         guard tcgetattr(fd, &original) == 0 else {
             throw ForgeError.invalidArguments("Unable to read terminal settings.")
         }
 
         var raw = original
+        // Disable ECHO (input echoing) and ICANON (canonical mode buffering line-by-line)
         raw.c_lflag &= ~tcflag_t(ECHO | ICANON)
-        // VMIN = at least 1 byte before returning
+        // VMIN = require at least 1 byte before returning from read()
         raw.c_cc.16 = 1
-        // VTIME = no timeout
+        // VTIME = 0 (no read timeout)
         raw.c_cc.17 = 0
 
+        // Apply raw mode settings immediately after flushing pending I/O
         guard tcsetattr(fd, TCSAFLUSH, &raw) == 0 else {
             throw ForgeError.invalidArguments("Unable to enable interactive terminal mode.")
         }
 
+        // Ensure original terminal state and cursor visibility are restored even if an error is thrown
         defer {
             _ = tcsetattr(fd, TCSAFLUSH, &original)
             showCursor()

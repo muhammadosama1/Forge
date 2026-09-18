@@ -47,8 +47,10 @@ enum TemplateRenderer {
         var result = text
         let regex = Self.conditionalRegex
 
+        // Loop until no matching conditional tags remain in the template text
         while true {
             let range = NSRange(result.startIndex..., in: result)
+            // Find the first innermost matching block
             guard let match = regex.firstMatch(in: result, range: range) else { break }
 
             let fullRange   = Range(match.range(at: 0), in: result)!
@@ -56,18 +58,23 @@ enum TemplateRenderer {
             let ifBodyRange = Range(match.range(at: 2), in: result)!
 
             let key    = String(result[keyRange])
+            // Evaluate truthiness in the context map
             let isTrue = (context[key] as? Bool) == true
 
             let replacement: String
             if isTrue {
+                // If condition is true, substitute with the 'if' body
                 replacement = String(result[ifBodyRange])
             } else if match.range(at: 3).location != NSNotFound {
+                // If condition is false and an 'else' block exists, substitute with the 'else' body
                 let elseBodyRange = Range(match.range(at: 3), in: result)!
                 replacement = String(result[elseBodyRange])
             } else {
+                // If condition is false without an 'else' block, remove the whole block
                 replacement = ""
             }
 
+            // Replace the entire matched {% if %}...{% endif %} range with the selected branch
             result.replaceSubrange(fullRange, with: replacement)
         }
 
@@ -81,9 +88,11 @@ enum TemplateRenderer {
     /// should match before `hasDomain`).
     private static func substituteVariables(_ text: String, context: [String: Any]) -> String {
         var result = text
+        // Sorting longest-first prevents substring replacement collisions
         let sortedKeys = context.keys.sorted { $0.count > $1.count }
         for key in sortedKeys {
             guard let value = context[key] else { continue }
+            // Support both spaced {{ key }} and unspaced {{key}} syntax
             result = result
                 .replacingOccurrences(of: "{{ \(key) }}", with: "\(value)")
                 .replacingOccurrences(of: "{{\(key)}}", with: "\(value)")
