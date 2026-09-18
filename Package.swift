@@ -14,5 +14,9 @@ let package = Package(
         .executableTarget(
             name: "forge"
         ),
+        .testTarget(
+            name: "forgeTests",
+            dependencies: ["forge"]
+        ),
     ]
 )
