@@ -26,6 +26,8 @@ struct FeatureGenerator {
     let shouldSkipDomain: Bool
     /// The concrete architecture pattern to generate.
     let type: FeatureType
+    /// Optional UI pattern category (form, list).
+    let category: FeatureCategory?
 
     /// Renders all template files for the given feature and writes them to disk.
     /// Skips existing files (throws `ForgeError.fileAlreadyExists`).
@@ -33,14 +35,43 @@ struct FeatureGenerator {
     /// - Parameter selection: Controls which file roles to include.
     /// - Returns: A result with paths, detected Xcode project, and package info.
     func generate(feature: FeatureName, selection: FeatureFileSelection) throws -> GenerationResult {
+        // Inspect target directory for an existing .xcodeproj for contextual file headers
         let xcodeProject    = findXcodeProject(in: projectPath)
         let headerContext   = FileHeaderContext(projectPath: projectPath, xcodeProject: xcodeProject)
         let featureRoot     = projectPath.appendingPathComponent(feature.folderName, isDirectory: true)
-        let sourcesRoot     = shouldCreatePackage
-            ? featureRoot.appendingPathComponent("Sources").appendingPathComponent(feature.typeName)
-            : featureRoot
+        let targetName      = packageTarget ?? feature.typeName
+        let sourcesRoot: URL
+        let testsRoot: URL
 
-        // Filter out Domain-layer files when --no-domain is used
+        // Determine output directory structure based on packaging options
+        if shouldCreatePackage {
+            // Standalone Swift Package: places code under Feature/Sources/<Target> and Feature/Tests/<Target>Tests
+            sourcesRoot = featureRoot
+                .appendingPathComponent("Sources", isDirectory: true)
+                .appendingPathComponent(targetName, isDirectory: true)
+            testsRoot = featureRoot
+                .appendingPathComponent("Tests", isDirectory: true)
+                .appendingPathComponent("\(targetName)Tests", isDirectory: true)
+        } else if let packageTarget {
+            // Existing multi-target package: check for root Sources/ directory or place directly under target
+            let sourcesDir = projectPath.appendingPathComponent("Sources", isDirectory: true)
+            let targetSourcesDir = FileManager.default.fileExists(atPath: sourcesDir.path)
+                ? sourcesDir.appendingPathComponent(packageTarget, isDirectory: true)
+                : projectPath.appendingPathComponent(packageTarget, isDirectory: true)
+            sourcesRoot = targetSourcesDir.appendingPathComponent(feature.folderName, isDirectory: true)
+
+            let testsDir = projectPath.appendingPathComponent("Tests", isDirectory: true)
+            let targetTestsDir = FileManager.default.fileExists(atPath: testsDir.path)
+                ? testsDir.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
+                : projectPath.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
+            testsRoot = targetTestsDir.appendingPathComponent(feature.folderName, isDirectory: true)
+        } else {
+            // Standard Xcode directory: places code under Feature/ and tests under Feature/Tests
+            sourcesRoot = featureRoot
+            testsRoot = featureRoot.appendingPathComponent("Tests", isDirectory: true)
+        }
+
+        // Filter out Domain-layer files when --no-domain flag is used
         let activeSelection: FeatureFileSelection
         if shouldSkipDomain {
             activeSelection = FeatureFileSelection(including: selection.includedFiles.filter { !$0.isDomain })
@@ -48,15 +79,21 @@ struct FeatureGenerator {
             activeSelection = selection
         }
 
-        // Build the template context once — reused for every file in this generation run.
+        // Build the shared template context map — reused for every file in this generation run
         var sharedContext = activeSelection.contextMap
         sharedContext["name"] = feature.typeName
         if shouldSkipDomain {
             sharedContext["hasNoDomain"] = true
         }
+        if let category {
+            switch category {
+            case .form:  sharedContext["isForm"] = true
+            case .list:  sharedContext["isList"] = true
+            }
+        }
 
-        // Render all specs that belong to the resolved selection.
-        var files: [GeneratedFile] = try type.templateSpecs
+        // Render all specs that belong to the active selection (header + body)
+        var files: [GeneratedFile] = try type.templateSpecs(for: category)
             .filter { activeSelection.contains($0.file) }
             .map { spec in
                 let header  = try Templates.fileHeader(
@@ -65,6 +102,7 @@ struct FeatureGenerator {
                 )
                 let body    = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
                 let layer   = spec.file.layer(for: type)
+                // "Root" files (like DependencyContainer) sit directly in sourcesRoot, others inside layer folder
                 let directory = layer == "Root"
                     ? sourcesRoot
                     : sourcesRoot.appendingPathComponent(layer, isDirectory: true)
@@ -74,21 +112,17 @@ struct FeatureGenerator {
                 )
             }
 
-        // Optionally append Package.swift.
+        // Optionally generate Package.swift if --package was specified
         var createdSwiftPackage: URL?
         if shouldCreatePackage {
-            let packageContent = try Templates.render("swiftPackage", name: feature.typeName)
+            let packageContent = try Templates.render("swiftPackage", name: targetName)
             let packageUrl = featureRoot.appendingPathComponent("Package.swift")
             files.append(GeneratedFile(url: packageUrl, content: packageContent))
             createdSwiftPackage = featureRoot
         }
 
-        // Optionally generate test files.
+        // Optionally generate unit test files if --tests was specified
         if shouldGenerateTests {
-            let testsRoot = shouldCreatePackage
-                ? featureRoot.appendingPathComponent("Tests").appendingPathComponent("\(feature.typeName)Tests")
-                : featureRoot.appendingPathComponent("Tests")
-
             for spec in type.testTemplateSpecs where !shouldSkipDomain || !spec.file.isDomainTest {
                 let header = try Templates.fileHeader(
                     fileName: spec.file.fileName(for: feature.typeName),
@@ -102,11 +136,12 @@ struct FeatureGenerator {
             }
         }
 
-        // Guard against overwriting existing files before touching the filesystem.
+        // Pre-flight check: ensure no target files already exist before writing anything to disk
         for file in files where FileManager.default.fileExists(atPath: file.url.path) {
             throw ForgeError.fileAlreadyExists(file.url.path)
         }
 
+        // Write all generated files atomically to disk, creating parent folders as needed
         for file in files {
             try FileManager.default.createDirectory(
                 at: file.url.deletingLastPathComponent(),

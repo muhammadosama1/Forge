@@ -308,6 +308,222 @@ final class {{ name }}ViewModel: ObservableObject {
 
 """,
 
+        // MARK: MVVM Form
+
+        "mvvmFormView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        Form {
+            TextField("Field 1", text: $viewModel.field1)
+            TextField("Field 2", text: $viewModel.field2)
+            Button("Submit") {
+                viewModel.submit()
+            }
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "mvvmFormViewModel.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}ViewModel: ObservableObject {
+    @Published var field1 = ""
+    @Published var field2 = ""
+
+    func submit() {
+        // Handle form submission
+    }
+}
+
+""",
+
+        // MARK: MVVM List
+
+        "mvvmListView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        List(viewModel.items) { item in
+            Text(item.title)
+        }
+        .task {
+            await viewModel.load()
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "mvvmListViewModel.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}ViewModel: ObservableObject {
+    @Published private(set) var items: [{{ name }}Item] = []
+
+    func load() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+
+""",
+
+        // MARK: Clean MVVM Form
+
+        "cleanMvvmFormView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        Form {
+            TextField("Field 1", text: $viewModel.field1)
+            TextField("Field 2", text: $viewModel.field2)
+            Button("Submit") {
+                viewModel.submit()
+            }
+        }
+    }
+}
+{% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "cleanMvvmFormViewModel.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}ViewModel: ObservableObject {
+    @Published var field1 = ""
+    @Published var field2 = ""
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(repository: {{ name }}RepositoryImpl) {
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(useCase: {{ name }}UseCase) {
+        self.useCase = useCase
+    }
+{% endif %}
+
+    func submit() {
+        // Handle form submission
+    }
+}
+
+""",
+
+        // MARK: Clean MVVM List
+
+        "cleanMvvmListView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        List(viewModel.items) { item in
+            Text(item.title)
+        }
+        .task {
+            await viewModel.load()
+        }
+    }
+}
+{% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "cleanMvvmListViewModel.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}ViewModel: ObservableObject {
+    @Published private(set) var items: [{{ name }}Item] = []
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(repository: {{ name }}RepositoryImpl) {
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(useCase: {{ name }}UseCase) {
+        self.useCase = useCase
+    }
+{% endif %}
+
+    func load() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+
+""",
+
         // MARK: MVI
 
         "mviDependencyContainer.stencil": """
@@ -330,6 +546,31 @@ import Foundation
 
 enum {{ name }}Intent: Equatable {
     case onAppear
+}
+
+
+""",
+
+        // MARK: MVI Form Intent
+
+        "mviFormIntent.stencil": """
+import Foundation
+
+enum {{ name }}Intent: Equatable {
+    case submit
+}
+
+
+""",
+
+        // MARK: MVI List Intent
+
+        "mviListIntent.stencil": """
+import Foundation
+
+enum {{ name }}Intent: Equatable {
+    case onAppear
+    case didLoad([{{ name }}Item])
 }
 
 
@@ -562,6 +803,136 @@ final class {{ name }}Store: ObservableObject {
 
 """,
 
+        // MARK: MVI Form
+
+        "mviFormView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var store: {{ name }}Store
+
+    init(store: {{ name }}Store) {
+        _store = StateObject(wrappedValue: store)
+    }
+
+    var body: some View {
+        Form {
+            TextField("Field 1", text: $store.state.field1)
+            TextField("Field 2", text: $store.state.field2)
+            Button("Submit") {
+                store.send(.submit)
+            }
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "mviFormStore.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}Store: ObservableObject {
+    @Published private(set) var state: {{ name }}State
+
+    private let reducer: {{ name }}Reducer
+
+    init(state: {{ name }}State = {{ name }}State(), reducer: {{ name }}Reducer) {
+        self.state = state
+        self.reducer = reducer
+    }
+
+    func send(_ intent: {{ name }}Intent) async {
+        reducer.reduce(state: &state, intent: intent)
+    }
+}
+
+""",
+
+        "mviFormState.stencil": """
+import Foundation
+
+struct {{ name }}State: Equatable {
+    var field1 = ""
+    var field2 = ""
+}
+
+
+""",
+
+        // MARK: MVI List
+
+        "mviListView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var store: {{ name }}Store
+
+    init(store: {{ name }}Store) {
+        _store = StateObject(wrappedValue: store)
+    }
+
+    var body: some View {
+        List(store.state.items) { item in
+            Text(item.title)
+        }
+        .task {
+            await store.send(.onAppear)
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "mviListStore.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}Store: ObservableObject {
+    @Published private(set) var state: {{ name }}State
+
+    private let reducer: {{ name }}Reducer
+
+    init(state: {{ name }}State = {{ name }}State(), reducer: {{ name }}Reducer) {
+        self.state = state
+        self.reducer = reducer
+    }
+
+    func send(_ intent: {{ name }}Intent) async {
+        reducer.reduce(state: &state, intent: intent)
+    }
+}
+
+""",
+
+        "mviListState.stencil": """
+import Foundation
+
+struct {{ name }}State: Equatable {
+    var items: [{{ name }}Item] = []
+    var isLoading = false
+}
+
+struct {{ name }}Item: Equatable, Identifiable {
+    let id: UUID
+    let title: String
+}
+
+
+""",
+
         // MARK: VIPER
 
         "viperContracts.stencil": """
@@ -684,6 +1055,117 @@ struct {{ name }}View: View {
     {{ name }}DependencyContainer.makeView()
 }
 {% endif %}
+
+""",
+
+        // MARK: VIPER Form
+
+        "viperFormView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = StateObject(wrappedValue: presenter)
+    }
+
+    var body: some View {
+        Form {
+            TextField("Field 1", text: $presenter.field1)
+            TextField("Field 2", text: $presenter.field2)
+            Button("Submit") {
+                presenter.submit()
+            }
+        }
+    }
+}
+{% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "viperFormPresenter.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}Presenter: ObservableObject {
+    @Published var field1 = ""
+    @Published var field2 = ""
+
+    private let interactor: {{ name }}Interactor
+    private let router: {{ name }}Router
+
+    init(interactor: {{ name }}Interactor, router: {{ name }}Router) {
+        self.interactor = interactor
+        self.router = router
+    }
+
+    func submit() {
+        // Handle form submission
+    }
+}
+
+""",
+
+        // MARK: VIPER List
+
+        "viperListView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = StateObject(wrappedValue: presenter)
+    }
+
+    var body: some View {
+        List(presenter.items) { item in
+            Text(item.title)
+        }
+        .task {
+            await presenter.viewDidLoad()
+        }
+    }
+}
+{% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "viperListPresenter.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}Presenter: ObservableObject {
+    @Published private(set) var items: [{{ name }}Item] = []
+
+    private let interactor: {{ name }}Interactor
+    private let router: {{ name }}Router
+
+    init(interactor: {{ name }}Interactor, router: {{ name }}Router) {
+        self.interactor = interactor
+        self.router = router
+    }
+
+    func viewDidLoad() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
 
 """,
 
@@ -903,6 +1385,89 @@ struct {{ name }}View: View {
 
 """,
 
+        // MARK: VIP Form
+
+        "vipFormView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var interactor: {{ name }}Interactor
+
+    init(interactor: {{ name }}Interactor) {
+        _interactor = StateObject(wrappedValue: interactor)
+    }
+
+    var body: some View {
+        Form {
+            TextField("Field 1", text: $interactor.field1)
+            TextField("Field 2", text: $interactor.field2)
+            Button("Submit") {
+                interactor.submit()
+            }
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "vipFormPresenter.stencil": """
+import Foundation
+
+@MainActor
+final class {{ name }}Presenter {
+    func present(response: {{ name }}.Response) -> {{ name }}.ViewModel {
+        {{ name }}.ViewModel(title: response.title)
+    }
+}
+
+""",
+
+        // MARK: VIP List
+
+        "vipListView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var interactor: {{ name }}Interactor
+
+    init(interactor: {{ name }}Interactor) {
+        _interactor = StateObject(wrappedValue: interactor)
+    }
+
+    var body: some View {
+        List(interactor.items) { item in
+            Text(item.title)
+        }
+        .task {
+            await interactor.load()
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "vipListPresenter.stencil": """
+import Foundation
+
+@MainActor
+final class {{ name }}Presenter {
+    func present(response: {{ name }}.Response) -> {{ name }}.ViewModel {
+        {{ name }}.ViewModel(title: response.title)
+    }
+}
+
+""",
+
         "vipWorker.stencil": """
 import Foundation
 
@@ -1093,6 +1658,113 @@ struct {{ name }}View: View {
 
 """,
 
+        // MARK: MVP Form
+
+        "mvpFormView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = StateObject(wrappedValue: presenter)
+    }
+
+    var body: some View {
+        Form {
+            TextField("Field 1", text: $presenter.field1)
+            TextField("Field 2", text: $presenter.field2)
+            Button("Submit") {
+                presenter.submit()
+            }
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "mvpFormPresenter.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}Presenter: ObservableObject {
+    @Published var field1 = ""
+    @Published var field2 = ""
+
+    private let model: {{ name }}Model
+
+    init(model: {{ name }}Model) {
+        self.model = model
+    }
+
+    func submit() {
+        // Handle form submission
+    }
+}
+
+""",
+
+        // MARK: MVP List
+
+        "mvpListView.stencil": """
+import SwiftUI
+
+struct {{ name }}View: View {
+    @StateObject private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = StateObject(wrappedValue: presenter)
+    }
+
+    var body: some View {
+        List(presenter.items) { item in
+            Text(item.title)
+        }
+        .task {
+            await presenter.load()
+        }
+    }
+}
+        {% if hasDependencyContainer %}
+#Preview {
+    {{ name }}DependencyContainer.makeView()
+}
+{% endif %}
+
+""",
+
+        "mvpListPresenter.stencil": """
+import Combine
+import Foundation
+
+@MainActor
+final class {{ name }}Presenter: ObservableObject {
+    @Published private(set) var items: [{{ name }}Item] = []
+
+    private let model: {{ name }}Model
+
+    init(model: {{ name }}Model) {
+        self.model = model
+    }
+
+    func load() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+
+""",
+
         "cleanMvpDependencyContainer.stencil": """
 import SwiftUI
 
@@ -1265,15 +1937,131 @@ struct {{ name }}View: View {
 
 """,
 
-        "cleanTcaDependencyContainer.stencil": """
+        // MARK: TCA Form
+
+        "tcaFormView.stencil": """
 import ComposableArchitecture
 import SwiftUI
 
-enum {{ name }}DependencyContainer {
+struct {{ name }}View: View {
+    let store: StoreOf<{{ name }}Feature>
 
+    var body: some View {
+        WithPerceptionTracking {
+            Form {
+                TextField("Field 1", text: $store.field1)
+                TextField("Field 2", text: $store.field2)
+                Button("Submit") {
+                    store.send(.submit)
+                }
+            }
+        }
+    }
+}
+
+#Preview {
+    {{ name }}View(
+        store: Store(initialState: {{ name }}Feature.State()) {
+            {{ name }}Feature()
+        }
+    )
 }
 
 """,
+
+        "tcaFormFeature.stencil": """
+import ComposableArchitecture
+import Foundation
+
+@Reducer
+struct {{ name }}Feature {
+    @ObservableState
+    struct State: Equatable {
+        var field1 = ""
+        var field2 = ""
+    }
+
+    enum Action: Equatable {
+        case submit
+    }
+
+    var body: some ReducerOf<Self> {
+        Reduce { state, action in
+            switch action {
+            case .submit:
+                // Handle form submission
+                return .none
+            }
+        }
+    }
+}
+
+""",
+
+        // MARK: TCA List
+
+        "tcaListView.stencil": """
+import ComposableArchitecture
+import SwiftUI
+
+struct {{ name }}View: View {
+    let store: StoreOf<{{ name }}Feature>
+
+    var body: some View {
+        WithPerceptionTracking {
+            List(store.items) { item in
+                Text(item.title)
+            }
+            .task {
+                store.send(.onAppear)
+            }
+        }
+    }
+}
+
+#Preview {
+    {{ name }}View(
+        store: Store(initialState: {{ name }}Feature.State()) {
+            {{ name }}Feature()
+        }
+    )
+}
+
+""",
+
+        "tcaListFeature.stencil": """
+import ComposableArchitecture
+import Foundation
+
+@Reducer
+struct {{ name }}Feature {
+    @ObservableState
+    struct State: Equatable {
+        var items: [{{ name }}Item] = []
+    }
+
+    enum Action: Equatable {
+        case onAppear
+    }
+
+    var body: some ReducerOf<Self> {
+        Reduce { state, action in
+            switch action {
+            case .onAppear:
+                // Load items
+                return .none
+            }
+        }
+    }
+}
+
+struct {{ name }}Item: Equatable, Identifiable {
+    let id: UUID
+    let title: String
+}
+
+""",
+
 
         // MARK: Test templates
 

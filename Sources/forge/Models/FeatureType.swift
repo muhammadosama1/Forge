@@ -125,80 +125,179 @@ enum FeatureType: String, CaseIterable {
     /// Ordered list of files to generate for this architecture pattern.
     /// Adding a new pattern only requires adding one case here — no new methods elsewhere.
     var templateSpecs: [TemplateSpec] {
+        templateSpecs(for: nil)
+    }
+
+    /// Ordered list of files to generate, with optional category-specific view templates.
+    func templateSpecs(for category: FeatureCategory?) -> [TemplateSpec] {
+        func viewSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .view, templateName: name)
+        }
+
+        func viewModelSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .viewModel, templateName: name)
+        }
+
+        func presenterSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .presenter, templateName: name)
+        }
+
+        func storeSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .store, templateName: name)
+        }
+
+        func stateSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .state, templateName: name)
+        }
+
+        func intentSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .intent, templateName: name)
+        }
+
+        func featureSpec(_ name: String) -> TemplateSpec {
+            TemplateSpec(file: .feature, templateName: name)
+        }
+
         switch self {
         case .cleanMVVM:
+            let view: String
+            let vm: String
+            switch category {
+            case .form:  view = "cleanMvvmFormView";     vm = "cleanMvvmFormViewModel"
+            case .list:  view = "cleanMvvmListView";     vm = "cleanMvvmListViewModel"
+            case nil:    view = "cleanMvvmView";         vm = "cleanMvvmViewModel"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "cleanMvvmDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "cleanMvvmView"),
-                TemplateSpec(file: .viewModel,           templateName: "cleanMvvmViewModel"),
+                viewSpec(view),
+                viewModelSpec(vm),
             ] + cleanDomainDataSpecs
 
         case .cleanVIPER:
+            let view: String
+            let pres: String
+            switch category {
+            case .form:  view = "viperFormView";         pres = "viperFormPresenter"
+            case .list:  view = "viperListView";         pres = "viperListPresenter"
+            case nil:    view = "viperView";             pres = "viperPresenter"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "cleanViperDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "viperView"),
-                TemplateSpec(file: .presenter,           templateName: "viperPresenter"),
-                TemplateSpec(file: .interactor,          templateName: "cleanViperInteractor"),
-                TemplateSpec(file: .router,              templateName: "viperRouter"),
-                TemplateSpec(file: .contracts,           templateName: "cleanViperContracts"),
+                viewSpec(view),
+                presenterSpec(pres),
+                TemplateSpec(file: .interactor, templateName: "cleanViperInteractor"),
+                TemplateSpec(file: .router, templateName: "viperRouter"),
+                TemplateSpec(file: .contracts, templateName: "cleanViperContracts"),
             ] + cleanDomainDataSpecs
 
         case .cleanVIP:
+            let view: String
+            let pres: String
+            switch category {
+            case .form:  view = "vipFormView";           pres = "vipFormPresenter"
+            case .list:  view = "vipListView";           pres = "vipListPresenter"
+            case nil:    view = "vipView";               pres = "cleanVipPresenter"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer,  templateName: "cleanVipDependencyContainer"),
-                TemplateSpec(file: .view,                 templateName: "vipView"),
+                viewSpec(view),
                 TemplateSpec(file: .interactor,           templateName: "cleanVipInteractor"),
-                TemplateSpec(file: .presenter,            templateName: "cleanVipPresenter"),
+                presenterSpec(pres),
                 TemplateSpec(file: .presentationModels,   templateName: "vipModels"),
             ] + cleanDomainDataSpecs
 
         case .cleanMVP:
+            let view: String
+            let pres: String
+            switch category {
+            case .form:  view = "mvpFormView";           pres = "mvpFormPresenter"
+            case .list:  view = "mvpListView";           pres = "mvpListPresenter"
+            case nil:    view = "mvpView";               pres = "cleanMvpPresenter"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "cleanMvpDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "mvpView"),
-                TemplateSpec(file: .presenter,           templateName: "cleanMvpPresenter"),
+                viewSpec(view),
+                presenterSpec(pres),
                 TemplateSpec(file: .model,               templateName: "mvpModel"),
             ] + cleanDomainDataSpecs
 
         case .cleanTCA:
+            let feat: String
+            let view: String
+            switch category {
+            case .form:  feat = "tcaFormFeature";        view = "tcaFormView"
+            case .list:  feat = "tcaListFeature";        view = "tcaListView"
+            case nil:    feat = "tcaFeature";            view = "tcaView"
+            }
             return [
-                TemplateSpec(file: .dependencyContainer, templateName: "cleanTcaDependencyContainer"),
-                TemplateSpec(file: .feature,             templateName: "tcaFeature"),
-                TemplateSpec(file: .view,                templateName: "tcaView"),
+                featureSpec(feat),
+                viewSpec(view),
             ] + cleanDomainDataSpecs
 
         case .cleanMVI:
+            let view: String
+            let store: String
+            let state: String
+            let intent: String
+            switch category {
+            case .form:  view = "mviFormView";           store = "mviFormStore";         state = "mviFormState";         intent = "mviFormIntent"
+            case .list:  view = "mviListView";           store = "mviListStore";         state = "mviListState";         intent = "mviListIntent"
+            case nil:    view = "mviView";               store = "cleanMviStore";        state = "cleanMviState";        intent = "cleanMviIntent"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "cleanMviDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "mviView"),
-                TemplateSpec(file: .store,               templateName: "cleanMviStore"),
-                TemplateSpec(file: .state,               templateName: "cleanMviState"),
-                TemplateSpec(file: .intent,              templateName: "cleanMviIntent"),
+                viewSpec(view),
+                storeSpec(store),
+                stateSpec(state),
+                intentSpec(intent),
                 TemplateSpec(file: .reducer,             templateName: "cleanMviReducer"),
             ] + cleanDomainDataSpecs
 
         case .mvvm:
+            let view: String
+            let vm: String
+            switch category {
+            case .form:  view = "mvvmFormView";          vm = "mvvmFormViewModel"
+            case .list:  view = "mvvmListView";          vm = "mvvmListViewModel"
+            case nil:    view = "mvvmSwiftUIView";       vm = "mvvmViewModel"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "mvvmDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "mvvmSwiftUIView"),
-                TemplateSpec(file: .viewModel,           templateName: "mvvmViewModel"),
+                viewSpec(view),
+                viewModelSpec(vm),
             ]
 
         case .mvi:
+            let view: String
+            let store: String
+            let state: String
+            let intent: String
+            switch category {
+            case .form:  view = "mviFormView";           store = "mviFormStore";         state = "mviFormState";         intent = "mviFormIntent"
+            case .list:  view = "mviListView";           store = "mviListStore";         state = "mviListState";         intent = "mviListIntent"
+            case nil:    view = "mviView";               store = "mviStore";             state = "mviState";             intent = "mviIntent"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "mviDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "mviView"),
-                TemplateSpec(file: .store,               templateName: "mviStore"),
-                TemplateSpec(file: .state,               templateName: "mviState"),
-                TemplateSpec(file: .intent,              templateName: "mviIntent"),
+                viewSpec(view),
+                storeSpec(store),
+                stateSpec(state),
+                intentSpec(intent),
                 TemplateSpec(file: .reducer,             templateName: "mviReducer"),
             ]
 
         case .viper:
+            let view: String
+            let pres: String
+            switch category {
+            case .form:  view = "viperFormView";         pres = "viperFormPresenter"
+            case .list:  view = "viperListView";         pres = "viperListPresenter"
+            case nil:    view = "viperView";             pres = "viperPresenter"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "viperDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "viperView"),
-                TemplateSpec(file: .presenter,           templateName: "viperPresenter"),
+                viewSpec(view),
+                presenterSpec(pres),
                 TemplateSpec(file: .interactor,          templateName: "viperInteractor"),
                 TemplateSpec(file: .router,              templateName: "viperRouter"),
                 TemplateSpec(file: .entity,              templateName: "viperEntity"),
@@ -206,27 +305,48 @@ enum FeatureType: String, CaseIterable {
             ]
 
         case .vip:
+            let view: String
+            let pres: String
+            switch category {
+            case .form:  view = "vipFormView";           pres = "vipFormPresenter"
+            case .list:  view = "vipListView";           pres = "vipListPresenter"
+            case nil:    view = "vipView";               pres = "vipPresenter"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "vipDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "vipView"),
+                viewSpec(view),
                 TemplateSpec(file: .interactor,          templateName: "vipInteractor"),
-                TemplateSpec(file: .presenter,           templateName: "vipPresenter"),
+                presenterSpec(pres),
                 TemplateSpec(file: .worker,              templateName: "vipWorker"),
                 TemplateSpec(file: .presentationModels,  templateName: "vipModels"),
             ]
 
         case .mvp:
+            let view: String
+            let pres: String
+            switch category {
+            case .form:  view = "mvpFormView";           pres = "mvpFormPresenter"
+            case .list:  view = "mvpListView";           pres = "mvpListPresenter"
+            case nil:    view = "mvpView";               pres = "mvpPresenter"
+            }
             return [
                 TemplateSpec(file: .dependencyContainer, templateName: "mvpDependencyContainer"),
-                TemplateSpec(file: .view,                templateName: "mvpView"),
-                TemplateSpec(file: .presenter,           templateName: "mvpPresenter"),
+                viewSpec(view),
+                presenterSpec(pres),
                 TemplateSpec(file: .model,               templateName: "mvpModel"),
             ]
 
         case .tca:
+            let feat: String
+            let view: String
+            switch category {
+            case .form:  feat = "tcaFormFeature";        view = "tcaFormView"
+            case .list:  feat = "tcaListFeature";        view = "tcaListView"
+            case nil:    feat = "tcaFeature";            view = "tcaView"
+            }
             return [
-                TemplateSpec(file: .feature, templateName: "tcaFeature"),
-                TemplateSpec(file: .view,    templateName: "tcaView"),
+                featureSpec(feat),
+                viewSpec(view),
             ]
         }
     }

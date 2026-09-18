@@ -16,6 +16,8 @@ extension FeatureFileSelection {
             "hasRemoteDataSource":    contains(.remoteDataSource),
             "hasWorker":              contains(.worker),
             "hasDependencyContainer": contains(.dependencyContainer),
+            "isForm":                 false,
+            "isList":                 false,
         ]
     }
 }

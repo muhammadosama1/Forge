@@ -16,13 +16,18 @@ struct Command {
     let shouldGenerateTests: Bool
     /// Resolved architecture pattern (presentation + clean flag).
     let type: FeatureType
+    /// Optional UI pattern category (form, list).
+    let category: FeatureCategory?
 
     static let usage = """
     Usage:
-      forge make <FeatureName> [--path <ProjectRoot>] [--package] [--target <SwiftPackageTarget>] [-<architecture>] [-clean] [--no-domain] [--tests]
+      forge make <FeatureName> [--path <ProjectRoot>] [--package] [--target <SwiftPackageTarget>] [-<architecture>] [-clean] [--no-domain] [--tests] [-form | -list]
 
     Architecture flags (pick one):
       -mvvm, -mvi, -viper, -vip, -mvp, -tca
+
+    Category flags (optional, pick one):
+      -form, -list
 
     Example:
       forge make Login
@@ -34,6 +39,8 @@ struct Command {
       forge make Login -viper -clean
       forge make Login -mvi
       forge make Login -tca -clean
+      forge make Login -mvvm -form
+      forge make Login -mvvm -list
       forge make Login --no-domain
       forge make Login --tests
       forge make Login -mvvm --tests
@@ -71,6 +78,10 @@ struct Command {
       -vip                  View-Interactor-Presenter
       -mvp                  Model-View-Presenter
       -tca                  The Composable Architecture
+
+    CATEGORY FLAGS (optional, pick one):
+      -form                 Form view with two input fields and submit button
+      -list                 List view connected to an array in the ViewModel
 
     When no architecture flag is provided, Forge prompts you interactively.
 
@@ -111,27 +122,33 @@ struct Command {
     /// - Parameter arguments: All arguments after the program name (should start with `"make"`).
     /// - Throws: `ForgeError.invalidArguments` on bad flags, `ForgeError.cancelled` if the user quits an interactive prompt.
     static func parse(arguments: [String]) throws -> Command {
+        // First argument must be the 'make' subcommand
         guard arguments.first == "make" else {
             throw ForgeError.invalidArguments("Expected command: make")
         }
 
+        // Must specify at least the feature name following 'make'
         guard arguments.count >= 2 else {
             throw ForgeError.invalidArguments("Missing feature name.")
         }
 
+        // Initialize default options before argument iteration
         var projectPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         var shouldCreatePackage = false
         var packageTarget: String?
         var shouldSkipDomain = false
         var shouldGenerateTests = false
         var selectedPresentation: PresentationArchitecture?
+        var selectedCategory: FeatureCategory?
         var hasCleanFlag = false
         var positional: [String] = []
         var index = 1
 
+        // Loop through arguments starting after 'make' (index 1)
         while index < arguments.count {
             let argument = arguments[index]
 
+            // Check argument against supported flag parsers; each helper increments index if matched
             if try parsePathFlag(argument, arguments: arguments, at: &index, projectPath: &projectPath) { continue }
             if parsePackageFlag(argument, at: &index, shouldCreatePackage: &shouldCreatePackage) { continue }
             if try parseTargetFlag(argument, arguments: arguments, at: &index, packageTarget: &packageTarget) { continue }
@@ -139,12 +156,15 @@ struct Command {
             if parseNoDomainFlag(argument, at: &index, shouldSkipDomain: &shouldSkipDomain) { continue }
             if parseTestsFlag(argument, at: &index, shouldGenerateTests: &shouldGenerateTests) { continue }
             if try parseArchitectureFlag(argument, at: &index, selectedPresentation: &selectedPresentation) { continue }
+            if try parseCategoryFlag(argument, at: &index, selectedCategory: &selectedCategory) { continue }
             if try parseUnknownFlag(argument) { continue }
 
+            // Non-flag arguments are collected as positional arguments (e.g. feature name)
             positional.append(argument)
             index += 1
         }
 
+        // Exactly one positional feature name is allowed
         guard positional.count == 1 else {
             throw ForgeError.invalidArguments("Expected exactly one feature name.")
         }
@@ -152,10 +172,12 @@ struct Command {
         var presentation = selectedPresentation
         var useCleanLayers = hasCleanFlag
 
+        // If user explicitly asks to skip domain files, Clean Architecture layers (Data) are implied
         if shouldSkipDomain {
             useCleanLayers = true
         }
 
+        // If no architecture or clean flag provided, enter interactive terminal mode
         if presentation == nil && !hasCleanFlag {
             presentation = try Terminal.promptSelection(
                 title: "Which presentation pattern do you want to use?",
@@ -168,9 +190,11 @@ struct Command {
                 )
             }
         } else if presentation == nil {
+            // If only -clean was passed with no specific presentation flag, default to MVVM
             presentation = .mvvm
         }
 
+        // Map presentation pattern + clean flag into the concrete FeatureType enum
         let type = FeatureType.resolve(presentation: presentation!, clean: useCleanLayers)
 
         return Command(
@@ -180,39 +204,50 @@ struct Command {
             packageTarget: packageTarget,
             shouldSkipDomain: shouldSkipDomain,
             shouldGenerateTests: shouldGenerateTests,
-            type: type
+            type: type,
+            category: selectedCategory
         )
     }
 
     /// Executes the command: validates the feature name, generates files, prints results.
     /// - Throws: `ForgeError` on validation failures, file conflicts, or cancellation.
     func run() throws {
+        // Validate and normalize the feature name into PascalCase
         let feature = try FeatureName(rawValue: featureName)
+        // Resolve the complete set of required file roles for this architecture
         let resolvedSelection = FeatureFileSelection.all(for: type)
+        // Instantiate the code generator configured with parsed command options
         let generator = FeatureGenerator(
             projectPath: projectPath,
             shouldCreatePackage: shouldCreatePackage,
             packageTarget: packageTarget,
             shouldGenerateTests: shouldGenerateTests,
             shouldSkipDomain: shouldSkipDomain,
-            type: type
+            type: type,
+            category: category
         )
+        // Generate templates and write files to disk
         let result = try generator.generate(feature: feature, selection: resolvedSelection)
 
+        // Output summary of created files
         print("Created \(type.displayName) feature: \(feature.typeName)")
         for file in result.createdFiles {
             print("  + \(file.path)")
         }
 
+        // Display additional package or Xcode project status
         if let packageRoot = result.createdSwiftPackage {
             print("\nCreated Swift package: \(packageRoot.path)")
-        } else if let xcodeProject = result.detectedXcodeProject {
-            print("\nDetected Xcode project: \(xcodeProject.lastPathComponent)")
-            print("Xcode project registration is the next step for this CLI.")
-        } else if let packageTarget = result.detectedSwiftPackageTarget {
-            print("\nDetected Swift package target: \(packageTarget)")
         } else {
-            print("\nNo .xcodeproj found under \(projectPath.path). Files were generated only.")
+            if let xcodeProject = result.detectedXcodeProject {
+                print("\nDetected Xcode project: \(xcodeProject.lastPathComponent)")
+                print("Xcode project registration is the next step for this CLI.")
+            }
+            if let packageTarget = result.detectedSwiftPackageTarget {
+                print("\nTargeted Swift package target: \(packageTarget)")
+            } else if result.detectedXcodeProject == nil {
+                print("\nNo .xcodeproj found under \(projectPath.path). Files were generated only.")
+            }
         }
     }
 
@@ -298,6 +333,22 @@ struct Command {
             )
         }
         selectedPresentation = presentation
+        index += 1
+        return true
+    }
+
+    /// Handles category flags (`-form`, `-list`): sets `selectedCategory`.
+    /// Rejects duplicate category flags.
+    private static func parseCategoryFlag(
+        _ argument: String, at index: inout Int, selectedCategory: inout FeatureCategory?
+    ) throws -> Bool {
+        guard let category = FeatureCategory.from(flag: argument) else { return false }
+        if selectedCategory != nil {
+            throw ForgeError.invalidArguments(
+                "Multiple category flags were provided. Pick one: \(FeatureCategory.validFlags)."
+            )
+        }
+        selectedCategory = category
         index += 1
         return true
     }
