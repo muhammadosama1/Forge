@@ -63,7 +63,8 @@ enum FeatureFile: String, CaseIterable, Hashable {
                 return "Presentation"
             }
             return "Data"
-        case .viewModelTests, .storeTests, .reducerTests, .presenterTests, .interactorTests, .featureTests, .useCaseTests, .repositoryTests:
+        case .viewModelTests, .storeTests, .reducerTests, .presenterTests,
+                .interactorTests, .featureTests, .useCaseTests, .repositoryTests:
             return "Tests"
         }
     }
@@ -93,7 +94,8 @@ enum FeatureFile: String, CaseIterable, Hashable {
     /// Whether this file is any test file (presentation or domain).
     var isTest: Bool {
         switch self {
-        case .viewModelTests, .storeTests, .reducerTests, .presenterTests, .interactorTests, .featureTests, .useCaseTests, .repositoryTests:
+        case .viewModelTests, .storeTests, .reducerTests, .presenterTests,
+                .interactorTests, .featureTests, .useCaseTests, .repositoryTests:
             return true
         default:
             return false
@@ -103,66 +105,7 @@ enum FeatureFile: String, CaseIterable, Hashable {
     /// Human-readable name used to build the generated Swift file name.
     /// E.g. `.viewModel` → `"ViewModel"`, giving `SearchViewModel.swift`.
     var displayName: String {
-        switch self {
-        case .dependencyContainer:
-            return "DependencyContainer"
-        case .feature:
-            return "Feature"
-        case .view:
-            return "View"
-        case .viewModel:
-            return "ViewModel"
-        case .store:
-            return "Store"
-        case .state:
-            return "State"
-        case .intent:
-            return "Intent"
-        case .reducer:
-            return "Reducer"
-        case .presenter:
-            return "Presenter"
-        case .interactor:
-            return "Interactor"
-        case .router:
-            return "Router"
-        case .contracts:
-            return "Contracts"
-        case .worker:
-            return "Worker"
-        case .presentationModels:
-            return "PresentationModels"
-        case .model:
-            return "Model"
-        case .entity:
-            return "Entity"
-        case .useCase:
-            return "UseCase"
-        case .repository:
-            return "Repository"
-        case .repositoryImpl:
-            return "RepositoryImpl"
-        case .remoteDataSource:
-            return "RemoteDataSource"
-        case .models:
-            return "Models"
-        case .viewModelTests:
-            return "ViewModelTests"
-        case .storeTests:
-            return "StoreTests"
-        case .reducerTests:
-            return "ReducerTests"
-        case .presenterTests:
-            return "PresenterTests"
-        case .interactorTests:
-            return "InteractorTests"
-        case .featureTests:
-            return "FeatureTests"
-        case .useCaseTests:
-            return "UseCaseTests"
-        case .repositoryTests:
-            return "RepositoryTests"
-        }
+        rawValue.prefix(1).uppercased() + rawValue.dropFirst()
     }
 
     /// Returns the full `.swift` filename for this role, e.g. `"NotesViewModel.swift"`.
