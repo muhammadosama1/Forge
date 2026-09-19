@@ -194,8 +194,8 @@ enum FeatureType: String, CaseIterable {
             let view: String
             let pres: String
             switch category {
-            case .form:  view = "vipFormView";           pres = "vipFormPresenter"
-            case .list:  view = "vipListView";           pres = "vipListPresenter"
+            case .form:  view = "vipFormView";           pres = "cleanVipPresenter"
+            case .list:  view = "vipListView";           pres = "cleanVipPresenter"
             case nil:    view = "vipView";               pres = "cleanVipPresenter"
             }
             return [
@@ -210,8 +210,8 @@ enum FeatureType: String, CaseIterable {
             let view: String
             let pres: String
             switch category {
-            case .form:  view = "mvpFormView";           pres = "mvpFormPresenter"
-            case .list:  view = "mvpListView";           pres = "mvpListPresenter"
+            case .form:  view = "mvpFormView";           pres = "cleanMvpPresenter"
+            case .list:  view = "mvpListView";           pres = "cleanMvpPresenter"
             case nil:    view = "mvpView";               pres = "cleanMvpPresenter"
             }
             return [
@@ -240,8 +240,8 @@ enum FeatureType: String, CaseIterable {
             let state: String
             let intent: String
             switch category {
-            case .form:  view = "mviFormView";           store = "mviFormStore";         state = "mviFormState";         intent = "mviFormIntent"
-            case .list:  view = "mviListView";           store = "mviListStore";         state = "mviListState";         intent = "mviListIntent"
+            case .form:  view = "mviFormView";           store = "cleanMviStore";         state = "cleanMviState";         intent = "cleanMviIntent"
+            case .list:  view = "mviListView";           store = "cleanMviStore";         state = "cleanMviState";         intent = "cleanMviIntent"
             case nil:    view = "mviView";               store = "cleanMviStore";        state = "cleanMviState";        intent = "cleanMviIntent"
             }
             return [

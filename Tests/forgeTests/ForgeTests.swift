@@ -1062,6 +1062,14 @@ final class ForgeTests: XCTestCase {
         let packageContent = try String(contentsOf: packageSwiftFile, encoding: .utf8)
         XCTAssertTrue(packageContent.contains("AppFeatureKit"))
         XCTAssertTrue(packageContent.contains("swift-tools-version"))
+        XCTAssertTrue(packageContent.contains(".testTarget("))
+        XCTAssertTrue(packageContent.contains("name: \"AppFeatureKitTests\""))
+        XCTAssertTrue(packageContent.contains("dependencies: [\"AppFeatureKit\"]"))
+
+        let testFile = tempDirectory.appendingPathComponent("Login/Tests/AppFeatureKitTests/LoginViewModelTests.swift")
+        let testContent = try String(contentsOf: testFile, encoding: .utf8)
+        XCTAssertTrue(testContent.contains("@testable import AppFeatureKit"))
+        XCTAssertFalse(testContent.contains("@testable import Login"))
     }
 
     func testTargetFlagWithExistingPackageStructure() throws {
@@ -1086,6 +1094,48 @@ final class ForgeTests: XCTestCase {
             .appendingPathComponent("Presentation")
             .appendingPathComponent("ProfileViewModel.swift")
         XCTAssertTrue(FileManager.default.fileExists(atPath: expectedViewModelPath.path))
+
+        let expectedTestPath = tempDirectory.appendingPathComponent("Tests/FeatureKitTests/Profile/ProfileViewModelTests.swift")
+        let testContent = try String(contentsOf: expectedTestPath, encoding: .utf8)
+        XCTAssertTrue(testContent.contains("@testable import FeatureKit"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDirectory.appendingPathComponent("FeatureKitTests").path))
+    }
+
+    func testPackageWithoutTestsDoesNotDeclareTestTarget() throws {
+        let feature = try FeatureName(rawValue: "Profile")
+        let generator = FeatureGenerator(
+            projectPath: tempDirectory,
+            shouldCreatePackage: true,
+            packageTarget: nil,
+            shouldGenerateTests: false,
+            shouldSkipDomain: false,
+            type: .mvvm,
+            category: nil
+        )
+        _ = try generator.generate(feature: feature, selection: .all(for: .mvvm))
+        let manifest = try String(contentsOf: tempDirectory.appendingPathComponent("Profile/Package.swift"), encoding: .utf8)
+        XCTAssertFalse(manifest.contains(".testTarget("))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDirectory.appendingPathComponent("Profile/Tests").path))
+    }
+
+    func testHyphenatedPackageTargetUsesSwiftModuleName() throws {
+        let feature = try FeatureName(rawValue: "Profile")
+        let generator = FeatureGenerator(
+            projectPath: tempDirectory,
+            shouldCreatePackage: true,
+            packageTarget: "Feature-Kit",
+            shouldGenerateTests: true,
+            shouldSkipDomain: false,
+            type: .mvvm,
+            category: nil
+        )
+        _ = try generator.generate(feature: feature, selection: .all(for: .mvvm))
+
+        let testFile = tempDirectory.appendingPathComponent("Profile/Tests/Feature-KitTests/ProfileViewModelTests.swift")
+        let testContent = try String(contentsOf: testFile, encoding: .utf8)
+        XCTAssertTrue(testContent.contains("@testable import Feature_Kit"))
+        let manifest = try String(contentsOf: tempDirectory.appendingPathComponent("Profile/Package.swift"), encoding: .utf8)
+        XCTAssertTrue(manifest.contains("name: \"Feature-Kit\""))
     }
 
     // MARK: - Duplicate File Guard
@@ -1798,20 +1848,20 @@ final class BestPracticesTests: XCTestCase {
 
     // MARK: - Test Template Best Practices
 
-    /// ViewModel test must use a `makeSUT()` factory for clean test setup.
-    func testViewModelTestHasMakeSUTFactory() throws {
+    /// ViewModel tests use the same dependency wiring as generated views.
+    func testViewModelTestUsesDependencyContainer() throws {
         let result = try TemplateRenderer.render("viewModelTests.stencil", context: [
             "name": "Login", "hasUseCase": false
         ])
-        XCTAssertTrue(result.contains("func makeSUT()"),
-            "Tests should use a makeSUT() factory — makes it easy to change construction in one place.")
+        XCTAssertTrue(result.contains("LoginDependencyContainer.makeViewModel()"),
+            "Tests must construct the selected variant with its required dependencies.")
     }
 
-    /// UseCase test must use a mock repository — not a concrete real one.
-    func testUseCaseTestUsesMockRepository() throws {
+    /// UseCase tests inject controllable repository results.
+    func testUseCaseTestUsesRepositoryStub() throws {
         let result = try TemplateRenderer.render("useCaseTests.stencil", context: ["name": "Login"])
-        XCTAssertTrue(result.contains("RepositoryMock"),
-            "UseCase tests must inject a mock repository for isolation — not the real implementation.")
+        XCTAssertTrue(result.contains("UseCaseRepositoryStub"),
+            "UseCase tests must inject a repository stub for isolation.")
         XCTAssertTrue(result.contains(": LoginRepository"),
             "Mock must conform to the LoginRepository protocol, not subclass the impl.")
     }
@@ -1839,8 +1889,14 @@ final class BestPracticesTests: XCTestCase {
         let result = try TemplateRenderer.render("reducerTests.stencil", context: ["name": "Login"])
         XCTAssertTrue(result.contains("sut.reduce(state: &state, intent: .onAppear)"),
             "Reducer tests must call reduce() directly — testing pure function behavior.")
-        XCTAssertTrue(result.contains("XCTAssertTrue(state.isLoading)"),
-            "Reducer tests should assert state mutation after reduce().")
+        XCTAssertTrue(result.contains("XCTAssertFalse(state.isLoading)"),
+            "Standalone reducers finish loading without performing an effect.")
+
+        let cleanResult = try TemplateRenderer.render("reducerTests.stencil", context: [
+            "name": "Login", "isClean": true
+        ])
+        XCTAssertTrue(cleanResult.contains("XCTAssertTrue(state.isLoading)"),
+            "Clean reducers start loading while their store performs the effect.")
     }
 
     // MARK: - Form Category Best Practices
