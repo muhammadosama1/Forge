@@ -61,9 +61,7 @@ struct FeatureGenerator {
             sourcesRoot = targetSourcesDir.appendingPathComponent(feature.folderName, isDirectory: true)
 
             let testsDir = projectPath.appendingPathComponent("Tests", isDirectory: true)
-            let targetTestsDir = FileManager.default.fileExists(atPath: testsDir.path)
-                ? testsDir.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
-                : projectPath.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
+            let targetTestsDir = testsDir.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
             testsRoot = targetTestsDir.appendingPathComponent(feature.folderName, isDirectory: true)
         } else {
             // Standard Xcode directory: places code under Feature/ and tests under Feature/Tests
@@ -82,6 +80,13 @@ struct FeatureGenerator {
         // Build the shared template context map — reused for every file in this generation run
         var sharedContext = activeSelection.contextMap
         sharedContext["name"] = feature.typeName
+        // SwiftPM replaces hyphens in target names when forming Swift module names.
+        sharedContext["moduleName"] = targetName.replacingOccurrences(of: "-", with: "_")
+        sharedContext["isClean"] = type.hasCleanLayers
+        for architecture in PresentationArchitecture.allCases {
+            sharedContext["is\(architecture.rawValue.uppercased())"] =
+                type == FeatureType.resolve(presentation: architecture, clean: type.hasCleanLayers)
+        }
         if shouldSkipDomain {
             sharedContext["hasNoDomain"] = true
         }
@@ -115,7 +120,10 @@ struct FeatureGenerator {
         // Optionally generate Package.swift if --package was specified
         var createdSwiftPackage: URL?
         if shouldCreatePackage {
-            let packageContent = try Templates.render("swiftPackage", name: targetName)
+            let packageContent = try TemplateRenderer.render("swiftPackage.stencil", context: [
+                "name": targetName,
+                "hasTests": shouldGenerateTests,
+            ])
             let packageUrl = featureRoot.appendingPathComponent("Package.swift")
             files.append(GeneratedFile(url: packageUrl, content: packageContent))
             createdSwiftPackage = featureRoot

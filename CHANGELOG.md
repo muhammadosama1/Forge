@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Add the missing view factories used by generated MVI, VIPER, VIP, and MVP previews.
+- Keep form/list state, actions, constructors, and tests consistent with the selected architecture and layers.
+- Register generated Swift package test targets and import the selected module in test files.
+- Place existing-package tests under `Tests/<Target>Tests` even when the `Tests` directory does not yet exist.
+
+### Added
+- A macOS regression matrix that builds and runs generated tests for 45 non-TCA feature combinations.
+
 ## [1.1.0] - 2026-09-18
 
 ### Added

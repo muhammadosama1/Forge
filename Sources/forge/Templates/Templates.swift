@@ -36,6 +36,7 @@ enum Templates {
     ) throws -> String {
         var context = selection.contextMap
         context["name"] = name
+        context["moduleName"] = name
         return try TemplateRenderer.render("\(templateName).stencil", context: context)
     }
 

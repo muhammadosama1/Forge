@@ -35,7 +35,13 @@ let package = Package(
     targets: [
         .target(
             name: "{{ name }}"
-        )
+        ),
+{% if hasTests %}
+        .testTarget(
+            name: "{{ name }}Tests",
+            dependencies: ["{{ name }}"]
+        ),
+{% endif %}
     ]
 )
 
@@ -57,7 +63,7 @@ struct {{ name }}Entity: Equatable, Identifiable {
         "models.stencil": """
 import Foundation
 
-struct {{ name }}Response: Decodable {
+struct {{ name }}Response: Decodable, Equatable {
     let id: UUID
     let title: String
 {% if hasUseCase %}
@@ -530,6 +536,12 @@ struct {{ name }}Item: Identifiable {
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(store: makeStore())
+    }
+{% endif %}
         {% if hasStore %}
             @MainActor
             static func makeStore() -> {{ name }}Store {
@@ -557,9 +569,10 @@ enum {{ name }}Intent: Equatable {
 import Foundation
 
 enum {{ name }}Intent: Equatable {
+    case field1Changed(String)
+    case field2Changed(String)
     case submit
 }
-
 
 """,
 
@@ -582,9 +595,25 @@ import Foundation
 struct {{ name }}Reducer {
     func reduce(state: inout {{ name }}State, intent: {{ name }}Intent) {
         switch intent {
+{% if isForm %}
+        case .field1Changed(let value):
+            state.field1 = value
+        case .field2Changed(let value):
+            state.field2 = value
+        case .submit:
+            // Handle form submission using the current state.
+            break
+{% else %}
         case .onAppear:
             state.isLoading = false
+{% if isList %}
+        case .didLoad(let items):
+            state.items = items
+            state.isLoading = false
+{% else %}
             state.errorMessage = nil
+{% endif %}
+{% endif %}
         }
     }
 }
@@ -665,6 +694,12 @@ struct {{ name }}View: View {
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(store: makeStore())
+    }
+{% endif %}
 {% if hasStore %}
     @MainActor
     static func makeStore() -> {{ name }}Store {
@@ -704,11 +739,15 @@ enum {{ name }}DependencyContainer {
 import Foundation
 
 enum {{ name }}Intent: Equatable {
+{% if isForm %}
+    case field1Changed(String)
+    case field2Changed(String)
+    case submit
+{% endif %}
     case onAppear
     case didLoad({% if hasNoDomain %}{{ name }}Response{% else %}{{ name }}Entity{% endif %})
     case didFail(String)
 }
-
 
 """,
 
@@ -718,6 +757,15 @@ import Foundation
 struct {{ name }}Reducer {
     func reduce(state: inout {{ name }}State, intent: {{ name }}Intent) {
         switch intent {
+{% if isForm %}
+        case .field1Changed(let value):
+            state.field1 = value
+        case .field2Changed(let value):
+            state.field2 = value
+        case .submit:
+            // Handle form submission using the current state.
+            break
+{% endif %}
         case .onAppear:
             state.isLoading = true
             state.errorMessage = nil
@@ -728,6 +776,9 @@ struct {{ name }}Reducer {
             state.entity = value
 {% endif %}
             state.title = value.title
+{% if isList %}
+            state.items = [{{ name }}Item(id: value.id, title: value.title)]
+{% endif %}
             state.isLoading = false
         case .didFail(let message):
             state.errorMessage = message
@@ -736,13 +787,19 @@ struct {{ name }}Reducer {
     }
 }
 
-
 """,
 
         "cleanMviState.stencil": """
 import Foundation
 
 struct {{ name }}State: Equatable {
+{% if isForm %}
+    var field1 = ""
+    var field2 = ""
+{% endif %}
+{% if isList %}
+    var items: [{{ name }}Item] = []
+{% endif %}
     {% if hasNoDomain %}var response: {{ name }}Response?
     {% else %}var entity: {{ name }}Entity?
     {% endif %}var title = "{{ name }}"
@@ -750,6 +807,13 @@ struct {{ name }}State: Equatable {
     var errorMessage: String?
 }
 
+
+{% if isList %}
+struct {{ name }}Item: Equatable, Identifiable {
+    let id: UUID
+    let title: String
+}
+{% endif %}
 
 """,
 
@@ -777,6 +841,17 @@ final class {{ name }}Store: ObservableObject {
         self.state = state
         self.useCase = useCase
         self.reducer = reducer
+    }
+{% endif %}
+
+
+{% if isForm %}
+    func updateField1(_ value: String) {
+        reducer.reduce(state: &state, intent: .field1Changed(value))
+    }
+
+    func updateField2(_ value: String) {
+        reducer.reduce(state: &state, intent: .field2Changed(value))
     }
 {% endif %}
 
@@ -817,10 +892,16 @@ struct {{ name }}View: View {
 
     var body: some View {
         Form {
-            TextField("Field 1", text: $store.state.field1)
-            TextField("Field 2", text: $store.state.field2)
+            TextField("Field 1", text: Binding(
+                get: { store.state.field1 },
+                set: { store.updateField1($0) }
+            ))
+            TextField("Field 2", text: Binding(
+                get: { store.state.field2 },
+                set: { store.updateField2($0) }
+            ))
             Button("Submit") {
-                store.send(.submit)
+                Task { await store.send(.submit) }
             }
         }
     }
@@ -847,6 +928,17 @@ final class {{ name }}Store: ObservableObject {
         self.state = state
         self.reducer = reducer
     }
+
+
+{% if isForm %}
+    func updateField1(_ value: String) {
+        reducer.reduce(state: &state, intent: .field1Changed(value))
+    }
+
+    func updateField2(_ value: String) {
+        reducer.reduce(state: &state, intent: .field2Changed(value))
+    }
+{% endif %}
 
     func send(_ intent: {{ name }}Intent) async {
         reducer.reduce(state: &state, intent: intent)
@@ -957,6 +1049,12 @@ protocol {{ name }}RouterInput {}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(presenter: makePresenter())
+    }
+{% endif %}
 {% if hasPresenter %}
     @MainActor
     static func makePresenter() -> {{ name }}Presenter {
@@ -1195,6 +1293,12 @@ protocol {{ name }}RouterInput {}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(presenter: makePresenter())
+    }
+{% endif %}
 {% if hasPresenter %}
     @MainActor
     static func makePresenter() -> {{ name }}Presenter {
@@ -1284,6 +1388,12 @@ final class {{ name }}Interactor {
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(interactor: makeInteractor())
+    }
+{% endif %}
         {% if hasInteractor %}
             @MainActor
             static func makeInteractor() -> {{ name }}Interactor {
@@ -1313,6 +1423,17 @@ import Foundation
 @MainActor
 final class {{ name }}Interactor: ObservableObject {
     @Published private(set) var viewModel = {{ name }}.ViewModel(title: "{{ name }}")
+{% if isForm %}
+    @Published var field1 = ""
+    @Published var field2 = ""
+
+    func submit() {
+        // Handle form submission.
+    }
+{% endif %}
+{% if isList %}
+    var items: [{{ name }}.Item] { viewModel.items }
+{% endif %}
 
     private let presenter: {{ name }}Presenter
     private let worker: {{ name }}Worker
@@ -1342,7 +1463,17 @@ enum {{ name }} {
 
     struct ViewModel {
         let title: String
+{% if isList %}
+        var items: [Item] = []
+{% endif %}
     }
+{% if isList %}
+
+    struct Item: Identifiable, Equatable {
+        let id: UUID
+        let title: String
+    }
+{% endif %}
 }
 
 """,
@@ -1462,7 +1593,10 @@ import Foundation
 @MainActor
 final class {{ name }}Presenter {
     func present(response: {{ name }}.Response) -> {{ name }}.ViewModel {
-        {{ name }}.ViewModel(title: response.title)
+        {{ name }}.ViewModel(
+            title: response.title,
+            items: [{{ name }}.Item(id: UUID(), title: response.title)]
+        )
     }
 }
 
@@ -1483,6 +1617,12 @@ struct {{ name }}Worker {
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(interactor: makeInteractor())
+    }
+{% endif %}
 {% if hasInteractor %}
     @MainActor
     static func makeInteractor() -> {{ name }}Interactor {
@@ -1531,6 +1671,17 @@ import Foundation
 @MainActor
 final class {{ name }}Interactor: ObservableObject {
     @Published private(set) var viewModel = {{ name }}.ViewModel(title: "{{ name }}")
+{% if isForm %}
+    @Published var field1 = ""
+    @Published var field2 = ""
+
+    func submit() {
+        // Handle form submission.
+    }
+{% endif %}
+{% if isList %}
+    var items: [{{ name }}.Item] { viewModel.items }
+{% endif %}
 
     private let presenter: {{ name }}Presenter
 {% if hasNoDomain %}
@@ -1573,15 +1724,20 @@ import Foundation
 final class {{ name }}Presenter {
 {% if hasNoDomain %}
     func present(response: {{ name }}Response) -> {{ name }}.ViewModel {
-        {{ name }}.ViewModel(title: response.title)
+        {{ name }}.ViewModel(
+            title: response.title{% if isList %},
+            items: [{{ name }}.Item(id: response.id, title: response.title)]{% endif %}
+        )
     }
 {% else %}
     func present(entity: {{ name }}Entity) -> {{ name }}.ViewModel {
-        {{ name }}.ViewModel(title: entity.title)
+        {{ name }}.ViewModel(
+            title: entity.title{% if isList %},
+            items: [{{ name }}.Item(id: entity.id, title: entity.title)]{% endif %}
+        )
     }
 {% endif %}
 }
-
 
 """,
 
@@ -1591,6 +1747,12 @@ final class {{ name }}Presenter {
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(presenter: makePresenter())
+    }
+{% endif %}
         {% if hasPresenter %}
             @MainActor
             static func makePresenter() -> {{ name }}Presenter {
@@ -1769,6 +1931,12 @@ struct {{ name }}Item: Identifiable {
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        {{ name }}View(presenter: makePresenter())
+    }
+{% endif %}
 {% if hasPresenter %}
     @MainActor
     static func makePresenter() -> {{ name }}Presenter {
@@ -1810,7 +1978,16 @@ import Foundation
 
 @MainActor
 final class {{ name }}Presenter: ObservableObject {
+{% if isForm %}
+    @Published var field1 = ""
+    @Published var field2 = ""
+{% else %}
+{% if isList %}
+    @Published private(set) var items: [{{ name }}Item] = []
+{% else %}
     @Published private(set) var title = "{{ name }}"
+{% endif %}
+{% endif %}
 
     private let model: {{ name }}Model
 {% if hasNoDomain %}
@@ -1829,21 +2006,45 @@ final class {{ name }}Presenter: ObservableObject {
     }
 {% endif %}
 
+{% if isForm %}
+    func submit() {
+        // Handle form submission.
+    }
+{% else %}
     func load() async {
         do {
 {% if hasNoDomain %}
             let response = try await repository.fetch{{ name }}()
+{% if isList %}
+            items = [{{ name }}Item(id: response.id, title: response.title)]
+{% else %}
             title = response.title
+{% endif %}
 {% else %}
             let entity = try await useCase.execute()
+{% if isList %}
+            items = [{{ name }}Item(id: entity.id, title: entity.title)]
+{% else %}
             title = entity.title
 {% endif %}
+{% endif %}
         } catch {
+{% if isList %}
+            items = []
+{% else %}
             title = model.title
+{% endif %}
         }
     }
+{% endif %}
 }
+{% if isList %}
 
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+{% endif %}
 
 """,
 
@@ -2061,161 +2262,5 @@ struct {{ name }}Item: Equatable, Identifiable {
 }
 
 """,
-
-
-        // MARK: Test templates
-
-        "viewModelTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}ViewModelTests: XCTestCase {
-    func testInitialState() {
-        let sut = makeSUT()
-        XCTAssertEqual(sut.title, "{{ name }}")
-        XCTAssertFalse(sut.isLoading)
-    }
-
-    private func makeSUT() -> {{ name }}ViewModel {
-{% if hasUseCase %}
-        {{ name }}ViewModel(useCase: {{ name }}UseCase(repository: {{ name }}RepositoryMock()))
-{% else %}
-        {{ name }}ViewModel()
-{% endif %}
-    }
-}
-{% if hasUseCase %}
-
-private final class {{ name }}RepositoryMock: {{ name }}Repository {
-    func fetch{{ name }}() async throws -> {{ name }}Entity {
-        {{ name }}Entity(id: UUID(), title: "Mock")
-    }
-}
-{% endif %}
-
-""",
-
-        "storeTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}StoreTests: XCTestCase {
-    func testInitialState() {
-        let sut = makeSUT()
-        XCTAssertEqual(sut.state.title, "{{ name }}")
-        XCTAssertFalse(sut.state.isLoading)
-    }
-
-    private func makeSUT() -> {{ name }}Store {
-        {{ name }}Store(reducer: {{ name }}Reducer())
-    }
-}
-
-""",
-
-        "reducerTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}ReducerTests: XCTestCase {
-    func testReduceOnAppear() {
-        let sut = {{ name }}Reducer()
-        var state = {{ name }}State()
-        sut.reduce(state: &state, intent: .onAppear)
-        XCTAssertTrue(state.isLoading)
-    }
-}
-
-""",
-
-        "presenterTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}PresenterTests: XCTestCase {
-    func testInitialState() {
-        let sut = makeSUT()
-        XCTAssertEqual(sut.title, "{{ name }}")
-    }
-
-    private func makeSUT() -> {{ name }}Presenter {
-        {{ name }}Presenter(interactor: {{ name }}Interactor(), router: {{ name }}Router())
-    }
-}
-
-""",
-
-        "interactorTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}InteractorTests: XCTestCase {
-    func testLoad() async {
-        let sut = makeSUT()
-        let entity = await sut.load()
-        XCTAssertEqual(entity.title, "{{ name }}")
-    }
-
-    private func makeSUT() -> {{ name }}Interactor {
-        {{ name }}Interactor()
-    }
-}
-
-""",
-
-        "featureTests.stencil": """
-import ComposableArchitecture
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}FeatureTests: XCTestCase {
-    func testOnAppear() {
-        let store = TestStore(initialState: {{ name }}Feature.State()) {
-            {{ name }}Feature()
-        }
-
-        store.send(.onAppear) {
-            $0.isLoading = false
-        }
-    }
-}
-
-""",
-
-        "useCaseTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}UseCaseTests: XCTestCase {
-    func testExecute() async throws {
-        let repository = {{ name }}RepositoryMock()
-        let sut = {{ name }}UseCase(repository: repository)
-        let entity = try await sut.execute()
-        XCTAssertEqual(entity.title, "Mock")
-    }
-}
-
-private final class {{ name }}RepositoryMock: {{ name }}Repository {
-    func fetch{{ name }}() async throws -> {{ name }}Entity {
-        {{ name }}Entity(id: UUID(), title: "Mock")
-    }
-}
-
-""",
-
-        "repositoryTests.stencil": """
-import XCTest
-@testable import {{ name }}
-
-final class {{ name }}RepositoryTests: XCTestCase {
-    func testFetch() async throws {
-        let dataSource = {{ name }}RemoteDataSource()
-        let sut = {{ name }}RepositoryImpl(remoteDataSource: dataSource)
-        let entity = try await sut.fetch{{ name }}()
-        XCTAssertEqual(entity.title, "{{ name }}")
-    }
-}
-
-""",
-    ]
+    ].merging(TestTemplateContent.files) { _, testTemplate in testTemplate }
 }

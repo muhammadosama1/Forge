@@ -9,8 +9,8 @@ It generates clean, testable architectural patterns with a single command—supp
 ## ⚡️ Quick Start
 
 ```sh
-# Generate Clean Architecture + MVVM feature (default)
-forge make Profile
+# Generate Clean Architecture + MVVM feature
+forge make Profile -mvvm -clean
 
 # Standalone MVVM with a form layout
 forge make Login -mvvm -form
@@ -106,6 +106,28 @@ Orders/
 
 ### With Tests (`--tests`)
 Creates isolated unit tests matching the architecture (e.g. `ProfileViewModelTests.swift`, `ProfileUseCaseTests.swift` with mock repositories, or `ProfileFeatureTests.swift` with TCA's `TestStore`).
+
+When combined with `--package`, the generated manifest includes a test target. For example:
+
+```sh
+forge make Profile -mvvm -clean --package --tests --target FeatureKit
+swift test --package-path Profile
+```
+
+Generated tests import `FeatureKit`, while feature types retain the `Profile` prefix. For an existing package, `--target` writes tests under `Tests/<Target>Tests/<Feature>`; its manifest must already declare the corresponding test target. For files added directly to an Xcode app, set the generated test import to the app's module name and add the files to the appropriate targets.
+
+### Verifying generated code
+
+The repository tests check parsing, rendering, and file generation. The generated-code check additionally builds and runs the emitted XCTest suites, including SwiftUI previews:
+
+```sh
+swift test
+python3 Scripts/verify-generated.py
+# Check one architecture while editing its templates:
+python3 Scripts/verify-generated.py --architecture mvi
+```
+
+Run these checks on macOS with Swift 6.2 or newer and Python 3. The generated-code matrix covers MVVM, MVI, VIPER, VIP, and MVP across default/form/list views and standalone/Clean/no-domain layers (45 combinations). Every package uses a target name different from its feature name to verify module imports. TCA is outside this matrix because its external dependency setup is not covered by the generated package manifest.
 
 ---
 
