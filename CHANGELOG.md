@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [1.1.1] - 2026-09-27
+
 ### Fixed
 - Add the missing view factories used by generated MVI, VIPER, VIP, and MVP previews.
 - Keep form/list state, actions, constructors, and tests consistent with the selected architecture and layers.
