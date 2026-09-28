@@ -46,9 +46,18 @@ struct Command {
       forge make Login -mvvm --tests
     """
 
+    /// Current release version of the forge tool.
+    /// Tracked in Sources/forge/Version.swift and stamped by git tags via Makefile.
+    static let version = forgeVersion
+
     /// Returns `true` when the argument is a help flag (`-h`, `--help`, or the literal `help`).
     static func isHelpFlag(_ argument: String) -> Bool {
         argument == "help" || argument == "--help" || argument == "-h"
+    }
+
+    /// Returns `true` when the argument is a version flag (`-v` or `--version`).
+    static func isVersionFlag(_ argument: String) -> Bool {
+        argument == "--version" || argument == "-v"
     }
 
     /// Comprehensive help text shown by `forge help`, `forge --help`, or `forge -h`.
@@ -60,8 +69,9 @@ struct Command {
       forge help
 
     COMMANDS:
-      make    Generate a new SwiftUI feature scaffold
-      help    Show this help message
+      make        Generate a new SwiftUI feature scaffold
+      help        Show this help message
+      --version   Print the current forge version
 
     MAKE OPTIONS:
       --path <dir>          Project root directory (default: current directory)

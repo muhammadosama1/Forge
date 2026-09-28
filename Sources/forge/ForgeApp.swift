@@ -15,6 +15,12 @@ struct Forge {
             return
         }
 
+        // Print version string and exit if -v / --version was passed
+        if args.contains(where: Command.isVersionFlag) {
+            print("forge \(Command.version)")
+            return
+        }
+
         do {
             // Parse arguments into a structured command (prompts interactively if flags are missing)
             let command = try Command.parse(arguments: args)
