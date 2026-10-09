@@ -361,25 +361,6 @@ final class {{ name }}InteractorTests: XCTestCase {
 
 """,
 
-        "featureTests.stencil": """
-import ComposableArchitecture
-import XCTest
-@testable import {{ moduleName }}
-
-final class {{ name }}FeatureTests: XCTestCase {
-    func testOnAppear() {
-        let store = TestStore(initialState: {{ name }}Feature.State()) {
-            {{ name }}Feature()
-        }
-
-        store.send(.onAppear) {
-            $0.isLoading = false
-        }
-    }
-}
-
-""",
-
         "useCaseTests.stencil": """
 import XCTest
 @testable import {{ moduleName }}

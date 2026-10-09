@@ -24,7 +24,7 @@ struct Command {
       forge make <FeatureName> [--path <ProjectRoot>] [--package] [--target <SwiftPackageTarget>] [-<architecture>] [-clean] [--no-domain] [--tests] [-form | -list]
 
     Architecture flags (pick one):
-      -mvvm, -mvi, -viper, -vip, -mvp, -tca
+      -mvvm, -mvi, -viper, -vip, -mvp
 
     Category flags (optional, pick one):
       -form, -list
@@ -38,7 +38,6 @@ struct Command {
       forge make Login -mvvm -clean
       forge make Login -viper -clean
       forge make Login -mvi
-      forge make Login -tca -clean
       forge make Login -mvvm -form
       forge make Login -mvvm -list
       forge make Login --no-domain
@@ -87,7 +86,6 @@ struct Command {
       -viper                View-Interactor-Presenter-Entity-Router
       -vip                  View-Interactor-Presenter
       -mvp                  Model-View-Presenter
-      -tca                  The Composable Architecture
 
     CATEGORY FLAGS (optional, pick one):
       -form                 Form view with two input fields and submit button
@@ -111,7 +109,6 @@ struct Command {
       VIP:        DependencyContainer, View, Interactor, Presenter, Worker,
                   PresentationModels
       MVP:        DependencyContainer, View, Presenter, Model
-      TCA:        Feature, View
 
       Adding -clean appends Domain and Data layer files to any architecture.
       Adding --tests appends XCTest files for the selected architecture.
@@ -121,7 +118,6 @@ struct Command {
       forge make Login -mvvm
       forge make Login -mvvm -clean
       forge make Login -mvvm --tests
-      forge make Login -tca -clean --tests
       forge make Login --path /path/to/MyApp
       forge make Login --path /path/to/MyApp --package
       forge make Login --path /path/to/MyPackage --target FeatureKit

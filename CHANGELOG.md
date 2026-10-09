@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Removed
+- Removed support for The Composable Architecture (`-tca`).
+
 ## [1.1.1] - 2026-09-27
 
 ### Fixed

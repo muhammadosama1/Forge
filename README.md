@@ -17,9 +17,6 @@ forge make Login -mvvm -form
 
 # Clean Architecture + VIPER with automated tests
 forge make Feed -viper -clean --tests
-
-# The Composable Architecture (TCA) inside a Swift Package target
-forge make Orders -tca --path /path/to/MyPackage --target AppFeaturesKit
 ```
 
 ---
@@ -53,7 +50,6 @@ When omitted, Forge interactively prompts you to choose in the terminal.
 | Flag | Pattern | Key Components Generated |
 |---|---|---|
 | `-mvvm` | **Model-View-ViewModel** | `View`, `ViewModel`, `DependencyContainer` |
-| `-tca` | **The Composable Architecture** | `Feature` (Reducer + ObservableState), `View` |
 | `-mvi` | **Model-View-Intent** | `View`, `Store`, `State`, `Intent`, `Reducer`, `DependencyContainer` |
 | `-viper` | **VIPER** | `View`, `Presenter`, `Interactor`, `Router`, `Entity`, `Contracts`, `DependencyContainer` |
 | `-vip` | **Clean Swift (VIP)** | `View`, `Interactor`, `Presenter`, `Worker`, `PresentationModels`, `DependencyContainer` |
@@ -73,7 +69,7 @@ Customize generated Views and State handlers with functional UI logic instead of
 * **`--path <dir>`**: Target project root directory (default: current working directory).
 * **`--package`**: Scaffolds the feature as an independent Swift Package with its own `Package.swift`.
 * **`--target <name>`**: Routes files into `Sources/<Target>/<Feature>` and `Tests/<Target>Tests/<Feature>` in existing multi-target packages.
-* **`--tests`**: Automatically generates matching unit test suites (`XCTestCase`, `TestStore` for TCA, UseCase mocks).
+* **`--tests`**: Automatically generates matching unit test suites (`XCTestCase`, UseCase mocks).
 
 ---
 
@@ -96,16 +92,8 @@ Profile/
     └── ProfileModels.swift
 ```
 
-### Standalone TCA (`forge make Orders -tca`)
-```text
-Orders/
-└── Presentation/
-    ├── OrdersFeature.swift
-    └── OrdersView.swift
-```
-
 ### With Tests (`--tests`)
-Creates isolated unit tests matching the architecture (e.g. `ProfileViewModelTests.swift`, `ProfileUseCaseTests.swift` with mock repositories, or `ProfileFeatureTests.swift` with TCA's `TestStore`).
+Creates isolated unit tests matching the architecture (e.g. `ProfileViewModelTests.swift`, `ProfileUseCaseTests.swift` with mock repositories).
 
 When combined with `--package`, the generated manifest includes a test target. For example:
 
@@ -127,7 +115,7 @@ python3 Scripts/verify-generated.py
 python3 Scripts/verify-generated.py --architecture mvi
 ```
 
-Run these checks on macOS with Swift 6.2 or newer and Python 3. The generated-code matrix covers MVVM, MVI, VIPER, VIP, and MVP across default/form/list views and standalone/Clean/no-domain layers (45 combinations). Every package uses a target name different from its feature name to verify module imports. TCA is outside this matrix because its external dependency setup is not covered by the generated package manifest.
+Run these checks on macOS with Swift 6.2 or newer and Python 3. The generated-code matrix covers MVVM, MVI, VIPER, VIP, and MVP across default/form/list views and standalone/Clean/no-domain layers (45 combinations). Every package uses a target name different from its feature name to verify module imports.
 
 ---
 
@@ -136,7 +124,7 @@ Run these checks on macOS with Swift 6.2 or newer and Python 3. The generated-co
 Every generated feature conforms to modern Swift & iOS conventions:
 * **Swift Concurrency**: Fully annotated with `@MainActor` for thread-safe UI updates and `.task` modifiers for cancellation-aware async loads.
 * **Clean Layer Boundaries**: Domain and Data layers remain 100% UI-framework agnostic (zero `SwiftUI` imports).
-* **Unidirectional Data Flow**: State properties use `@Published private(set)` (or TCA `@ObservableState`) to protect state encapsulation.
+* **Unidirectional Data Flow**: State properties use `@Published private(set)` to protect state encapsulation.
 * **Stable Identity**: List item models declare stable identifiers (`let id: UUID`), preventing SwiftUI list diffing and animation glitches.
 * **Dependency Inversion**: UseCases interact strictly with protocol abstractions for effortless mocking and unit testing.
 * **Header Metadata**: Automatically includes author, project name, and creation date in standard Xcode header format.

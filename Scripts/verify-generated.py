@@ -67,7 +67,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--architecture", action="append", choices=ARCHITECTURES,
-        help="repeat to select architectures; default: all except TCA",
+        help="repeat to select architectures; default: all",
     )
     parser.add_argument("--forge", type=Path, help="use an already-built Forge executable")
     parser.add_argument("--jobs", type=positive_int, default=4, help="Swift compiler jobs (default: 4)")

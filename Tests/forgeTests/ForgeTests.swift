@@ -113,14 +113,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertEqual(FeatureType.resolve(presentation: .mvp, clean: false), .mvp)
     }
 
-    func testResolveCleanTCA() {
-        XCTAssertEqual(FeatureType.resolve(presentation: .tca, clean: true), .cleanTCA)
-    }
-
-    func testResolveTCA() {
-        XCTAssertEqual(FeatureType.resolve(presentation: .tca, clean: false), .tca)
-    }
-
     func testResolveCleanMVI() {
         XCTAssertEqual(FeatureType.resolve(presentation: .mvi, clean: true), .cleanMVI)
     }
@@ -136,7 +128,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertTrue(FeatureType.cleanVIPER.hasCleanLayers)
         XCTAssertTrue(FeatureType.cleanVIP.hasCleanLayers)
         XCTAssertTrue(FeatureType.cleanMVP.hasCleanLayers)
-        XCTAssertTrue(FeatureType.cleanTCA.hasCleanLayers)
         XCTAssertTrue(FeatureType.cleanMVI.hasCleanLayers)
     }
 
@@ -146,7 +137,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertFalse(FeatureType.viper.hasCleanLayers)
         XCTAssertFalse(FeatureType.vip.hasCleanLayers)
         XCTAssertFalse(FeatureType.mvp.hasCleanLayers)
-        XCTAssertFalse(FeatureType.tca.hasCleanLayers)
     }
 
     // MARK: - FeatureType displayName
@@ -156,14 +146,12 @@ final class ForgeTests: XCTestCase {
         XCTAssertEqual(FeatureType.cleanVIPER.displayName, "Clean Architecture + VIPER")
         XCTAssertEqual(FeatureType.cleanVIP.displayName, "Clean Architecture + VIP")
         XCTAssertEqual(FeatureType.cleanMVP.displayName, "Clean Architecture + MVP")
-        XCTAssertEqual(FeatureType.cleanTCA.displayName, "Clean Architecture + TCA")
         XCTAssertEqual(FeatureType.cleanMVI.displayName, "Clean Architecture + MVI")
         XCTAssertEqual(FeatureType.mvvm.displayName, "MVVM")
         XCTAssertEqual(FeatureType.mvi.displayName, "MVI")
         XCTAssertEqual(FeatureType.viper.displayName, "VIPER")
         XCTAssertEqual(FeatureType.vip.displayName, "VIP")
         XCTAssertEqual(FeatureType.mvp.displayName, "MVP")
-        XCTAssertEqual(FeatureType.tca.displayName, "TCA")
     }
 
     // MARK: - PresentationArchitecture Parsing
@@ -171,7 +159,6 @@ final class ForgeTests: XCTestCase {
     func testParseSingleDashFlag() {
         XCTAssertEqual(PresentationArchitecture.from(flag: "-mvvm"), .mvvm)
         XCTAssertEqual(PresentationArchitecture.from(flag: "-viper"), .viper)
-        XCTAssertEqual(PresentationArchitecture.from(flag: "-tca"), .tca)
         XCTAssertEqual(PresentationArchitecture.from(flag: "-mvi"), .mvi)
         XCTAssertEqual(PresentationArchitecture.from(flag: "-vip"), .vip)
         XCTAssertEqual(PresentationArchitecture.from(flag: "-mvp"), .mvp)
@@ -192,7 +179,6 @@ final class ForgeTests: XCTestCase {
     func testPresentationArchitectureDescription() {
         XCTAssertEqual(PresentationArchitecture.mvvm.description, "MVVM")
         XCTAssertEqual(PresentationArchitecture.viper.description, "VIPER")
-        XCTAssertEqual(PresentationArchitecture.tca.description, "TCA")
     }
 
     // MARK: - FeatureCategory Parsing
@@ -253,7 +239,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertTrue(FeatureFile.reducerTests.isTest)
         XCTAssertTrue(FeatureFile.presenterTests.isTest)
         XCTAssertTrue(FeatureFile.interactorTests.isTest)
-        XCTAssertTrue(FeatureFile.featureTests.isTest)
         XCTAssertTrue(FeatureFile.useCaseTests.isTest)
         XCTAssertTrue(FeatureFile.repositoryTests.isTest)
         XCTAssertFalse(FeatureFile.view.isTest)
@@ -299,23 +284,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertTrue(selection.contains(.repositoryImpl))
         XCTAssertTrue(selection.contains(.remoteDataSource))
         XCTAssertTrue(selection.contains(.models))
-    }
-
-    func testFeatureFileSelectionAllForTCA() {
-        let selection = FeatureFileSelection.all(for: .tca)
-        XCTAssertTrue(selection.contains(.feature))
-        XCTAssertTrue(selection.contains(.view))
-        XCTAssertFalse(selection.contains(.viewModel))
-        XCTAssertFalse(selection.contains(.dependencyContainer))
-    }
-
-    func testFeatureFileSelectionAllForCleanTCA() {
-        let selection = FeatureFileSelection.all(for: .cleanTCA)
-        XCTAssertTrue(selection.contains(.feature))
-        XCTAssertTrue(selection.contains(.view))
-        XCTAssertTrue(selection.contains(.useCase))
-        XCTAssertTrue(selection.contains(.repositoryImpl))
-        XCTAssertFalse(selection.contains(.dependencyContainer))
     }
 
     func testFeatureFileSelectionAllForMVI() {
@@ -658,26 +626,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: presentation.appendingPathComponent("OnboardingModel.swift").path))
     }
 
-    func testGenerateTCA() throws {
-        let feature = try FeatureName(rawValue: "Cart")
-        let generator = FeatureGenerator(
-            projectPath: tempDirectory,
-            shouldCreatePackage: false,
-            packageTarget: nil,
-            shouldGenerateTests: false,
-            shouldSkipDomain: false,
-            type: .tca,
-            category: nil
-        )
-        _ = try generator.generate(feature: feature, selection: .all(for: .tca))
-
-        let presentation = tempDirectory.appendingPathComponent("Cart/Presentation")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: presentation.appendingPathComponent("CartFeature.swift").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: presentation.appendingPathComponent("CartView.swift").path))
-        // TCA has no dependency container
-        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDirectory.appendingPathComponent("Cart/CartDependencyContainer.swift").path))
-    }
-
     // MARK: - FeatureGenerator Tests - Clean Architectures
 
     func testGenerateCleanMVVM() throws {
@@ -743,25 +691,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("Domain/NotificationsEntity.swift").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("Presentation/NotificationsStore.swift").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("Presentation/NotificationsReducer.swift").path))
-    }
-
-    func testGenerateCleanTCA() throws {
-        let feature = try FeatureName(rawValue: "Orders")
-        let generator = FeatureGenerator(
-            projectPath: tempDirectory,
-            shouldCreatePackage: false,
-            packageTarget: nil,
-            shouldGenerateTests: false,
-            shouldSkipDomain: false,
-            type: .cleanTCA,
-            category: nil
-        )
-        _ = try generator.generate(feature: feature, selection: .all(for: .cleanTCA))
-
-        let base = tempDirectory.appendingPathComponent("Orders")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("Presentation/OrdersFeature.swift").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("Domain/OrdersUseCase.swift").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("Data/OrdersRepositoryImpl.swift").path))
     }
 
     func testGenerateCleanVIP() throws {
@@ -839,25 +768,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: viewFile.path))
         let content = try String(contentsOf: viewFile, encoding: .utf8)
         XCTAssertTrue(content.contains("List") || content.contains("ForEach"))
-    }
-
-    func testGenerateTCAFormCategory() throws {
-        let feature = try FeatureName(rawValue: "Auth")
-        let generator = FeatureGenerator(
-            projectPath: tempDirectory,
-            shouldCreatePackage: false,
-            packageTarget: nil,
-            shouldGenerateTests: false,
-            shouldSkipDomain: false,
-            type: .tca,
-            category: .form
-        )
-        _ = try generator.generate(feature: feature, selection: .all(for: .tca))
-
-        let viewFile = tempDirectory.appendingPathComponent("Auth/Presentation/AuthView.swift")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: viewFile.path))
-        let content = try String(contentsOf: viewFile, encoding: .utf8)
-        XCTAssertTrue(content.contains("TextField"))
     }
 
     func testGenerateVIPERFormCategory() throws {
@@ -970,23 +880,6 @@ final class ForgeTests: XCTestCase {
         let testsDir = tempDirectory.appendingPathComponent("Map/Tests")
         XCTAssertTrue(FileManager.default.fileExists(atPath: testsDir.appendingPathComponent("MapPresenterTests.swift").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: testsDir.appendingPathComponent("MapInteractorTests.swift").path))
-    }
-
-    func testGenerateWithTestsTCA() throws {
-        let feature = try FeatureName(rawValue: "Wallet")
-        let generator = FeatureGenerator(
-            projectPath: tempDirectory,
-            shouldCreatePackage: false,
-            packageTarget: nil,
-            shouldGenerateTests: true,
-            shouldSkipDomain: false,
-            type: .tca,
-            category: nil
-        )
-        _ = try generator.generate(feature: feature, selection: .all(for: .tca))
-
-        let testsDir = tempDirectory.appendingPathComponent("Wallet/Tests")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: testsDir.appendingPathComponent("WalletFeatureTests.swift").path))
     }
 
     // MARK: - FeatureGenerator Tests - --no-domain Flag
@@ -1275,10 +1168,6 @@ final class ForgeTests: XCTestCase {
         XCTAssertEqual(FeatureType.cleanMVVM.templateSpecs.count, 9)
     }
 
-    func testTCATemplateSpecsHasTwoFiles() {
-        XCTAssertEqual(FeatureType.tca.templateSpecs.count, 2)
-    }
-
     func testMVITemplateSpecsHasSixFiles() {
         XCTAssertEqual(FeatureType.mvi.templateSpecs.count, 6)
     }
@@ -1307,12 +1196,6 @@ final class ForgeTests: XCTestCase {
 
     func testMVITestTemplateSpecsHasTwoFiles() {
         XCTAssertEqual(FeatureType.mvi.testTemplateSpecs.count, 2)
-    }
-
-    func testTCATestTemplateSpecsHasOneFile() {
-        let specs = FeatureType.tca.testTemplateSpecs
-        XCTAssertEqual(specs.count, 1)
-        XCTAssertEqual(specs[0].file, .featureTests)
     }
 }
 
@@ -1477,13 +1360,6 @@ final class BestPracticesTests: XCTestCase {
         let dc = try XCTUnwrap(content(named: "LoginDependencyContainer.swift", in: files))
         XCTAssertTrue(dc.contains("@MainActor") && dc.contains("makeView"),
             "Factory methods returning @MainActor view/viewModel must themselves be @MainActor.")
-    }
-
-    /// TCA uses @Dependency / DependencyValues instead of a DependencyContainer file.
-    func testCleanTCADoesNotGenerateDependencyContainer() throws {
-        let files = try generateAll(type: .cleanTCA)
-        let dc = content(named: "LoginDependencyContainer.swift", in: files)
-        XCTAssertNil(dc, "Clean TCA should not generate a DependencyContainer file — TCA uses @Dependency instead.")
     }
 
     // MARK: - Clean Architecture Layer Separation
@@ -1741,70 +1617,10 @@ final class BestPracticesTests: XCTestCase {
             "MVP Model should be Equatable for reliable comparison in tests.")
     }
 
-    // MARK: - TCA Best Practices
-
-    /// TCA Feature must use `@Reducer` macro — the modern TCA 1.x entry point.
-    func testTCAFeatureUsesReducerMacro() throws {
-        let files = try generateAll(type: .tca)
-        let feature = try XCTUnwrap(content(named: "LoginFeature.swift", in: files))
-        XCTAssertTrue(feature.contains("@Reducer"),
-            "TCA Feature must use @Reducer macro (TCA 1.x+), not the old Reducer protocol directly.")
-    }
-
-    /// TCA State must use `@ObservableState` for observation in TCA 1.x.
-    func testTCAStateUsesObservableStateMacro() throws {
-        let files = try generateAll(type: .tca)
-        let feature = try XCTUnwrap(content(named: "LoginFeature.swift", in: files))
-        XCTAssertTrue(feature.contains("@ObservableState"),
-            "TCA 1.x State must be annotated with @ObservableState for modern observation support.")
-    }
-
-    /// TCA State must be `Equatable` for store diffing.
-    func testTCAStateIsEquatable() throws {
-        let files = try generateAll(type: .tca)
-        let feature = try XCTUnwrap(content(named: "LoginFeature.swift", in: files))
-        XCTAssertTrue(feature.contains("struct State: Equatable"),
-            "TCA State must conform to Equatable for the TestStore diff assertions.")
-    }
-
-    /// TCA Action must be `Equatable`.
-    func testTCAActionIsEquatable() throws {
-        let files = try generateAll(type: .tca)
-        let feature = try XCTUnwrap(content(named: "LoginFeature.swift", in: files))
-        XCTAssertTrue(feature.contains("enum Action: Equatable"),
-            "TCA Action must be Equatable for TestStore assertions.")
-    }
-
-    /// TCA View receives a `StoreOf<Feature>` — not a ViewModel or store class.
-    func testTCAViewReceivesStoreOf() throws {
-        let files = try generateAll(type: .tca)
-        let view = try XCTUnwrap(content(named: "LoginView.swift", in: files))
-        XCTAssertTrue(view.contains("StoreOf<LoginFeature>"),
-            "TCA View must receive StoreOf<Feature> — the idiomatic TCA entry point.")
-    }
-
-    /// TCA View must use `WithPerceptionTracking` for iOS 16 backward compat with @ObservableState.
-    func testTCAViewUsesWithPerceptionTracking() throws {
-        let files = try generateAll(type: .tca)
-        let view = try XCTUnwrap(content(named: "LoginView.swift", in: files))
-        XCTAssertTrue(view.contains("WithPerceptionTracking"),
-            "TCA View should wrap body in WithPerceptionTracking for iOS 16 compatibility.")
-    }
-
-    /// TCA Preview uses the idiomatic Store + Feature initializer.
-    func testTCAViewHasIdiomatic​Preview() throws {
-        let files = try generateAll(type: .tca)
-        let view = try XCTUnwrap(content(named: "LoginView.swift", in: files))
-        XCTAssertTrue(view.contains("#Preview"),
-            "TCA View must include a #Preview macro block.")
-        XCTAssertTrue(view.contains("Store(initialState: LoginFeature.State())"),
-            "TCA Preview must instantiate Store with initialState for correctness.")
-    }
-
     // MARK: - SwiftUI View Best Practices
 
-    /// All non-TCA Views must have `#Preview` using DependencyContainer.
-    func testNonTCAViewsHavePreviewMacro() throws {
+    /// All Views must have `#Preview` using DependencyContainer.
+    func testViewsHavePreviewMacro() throws {
         for type in [FeatureType.mvvm, .mvi, .viper, .vip, .mvp] {
             // Use a fresh sub-directory per type to avoid fileAlreadyExists collision
             let subDir = tempDirectory.appendingPathComponent(type.rawValue)
@@ -1875,15 +1691,6 @@ final class BestPracticesTests: XCTestCase {
             "RepositoryTests instantiate the real Impl to test layer integration.")
     }
 
-    /// TCA Feature test must use `TestStore` — TCA's purpose-built test helper.
-    func testTCAFeatureTestUsesTestStore() throws {
-        let result = try TemplateRenderer.render("featureTests.stencil", context: ["name": "Login"])
-        XCTAssertTrue(result.contains("TestStore"),
-            "TCA feature tests must use TestStore, TCA's built-in exhaustive test helper.")
-        XCTAssertTrue(result.contains("LoginFeature.State()"),
-            "TestStore must be initialized with the Feature's State.")
-    }
-
     /// Reducer test must mutate state via the reducer, not directly.
     func testReducerTestCallsReduceMethod() throws {
         let result = try TemplateRenderer.render("reducerTests.stencil", context: ["name": "Login"])
@@ -1944,7 +1751,6 @@ final class BestPracticesTests: XCTestCase {
             "mviListState.stencil",
             "viperListPresenter.stencil",
             "mvpListPresenter.stencil",
-            "tcaListFeature.stencil",
         ]
         for t in templates {
             let content = try TemplateRenderer.render(t, context: ["name": "Login"])
