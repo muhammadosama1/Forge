@@ -18,10 +18,51 @@ struct Command {
     let type: FeatureType
     /// Optional UI pattern category (form, list).
     let category: FeatureCategory?
+    /// Team naming conventions loaded from `.forge.yml` (or defaults).
+    let naming: NamingConfig
+    /// Reactive state-binding mechanism loaded from `.forge.yml` (or defaults).
+    let binding: BindingStrategy
+    /// Unit testing framework loaded from `.forge.yml` (or defaults).
+    let testing: TestFramework
+    /// Dependency injection strategy loaded from `.forge.yml` (or defaults).
+    let di: DependencyInjectionStrategy
+    /// URL of the loaded `.forge.yml` file, if discovered or explicitly provided.
+    let loadedConfigURL: URL?
+
+    init(
+        featureName: String,
+        projectPath: URL,
+        shouldCreatePackage: Bool,
+        packageTarget: String?,
+        shouldSkipDomain: Bool,
+        shouldGenerateTests: Bool,
+        type: FeatureType,
+        category: FeatureCategory?,
+        naming: NamingConfig = NamingConfig(),
+        binding: BindingStrategy = .combine,
+        testing: TestFramework = .xctest,
+        di: DependencyInjectionStrategy = .native,
+        loadedConfigURL: URL? = nil
+    ) {
+        self.featureName = featureName
+        self.projectPath = projectPath
+        self.shouldCreatePackage = shouldCreatePackage
+        self.packageTarget = packageTarget
+        self.shouldSkipDomain = shouldSkipDomain
+        self.shouldGenerateTests = shouldGenerateTests
+        self.type = type
+        self.category = category
+        self.naming = naming
+        self.binding = binding
+        self.testing = testing
+        self.di = di
+        self.loadedConfigURL = loadedConfigURL
+    }
 
     static let usage = """
     Usage:
-      forge make <FeatureName> [--path <ProjectRoot>] [--package] [--target <SwiftPackageTarget>] [-<architecture>] [-clean] [--no-domain] [--tests] [-form | -list]
+      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget>] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [-form | -list]
+      forge init [--path <ProjectRoot>] [--force]
 
     Architecture flags (pick one):
       -mvvm, -mvi, -viper, -vip, -mvp
@@ -30,6 +71,7 @@ struct Command {
       -form, -list
 
     Example:
+      forge init
       forge make Login
       forge make Login --path /path/to/MyApp
       forge make Login --package
@@ -43,6 +85,7 @@ struct Command {
       forge make Login --no-domain
       forge make Login --tests
       forge make Login -mvvm --tests
+      forge make Login --config /path/to/.forge.yml
     """
 
     /// Current release version of the forge tool.
@@ -65,20 +108,30 @@ struct Command {
 
     USAGE:
       forge make <FeatureName> [options]
+      forge init [options]
       forge help
 
     COMMANDS:
       make        Generate a new SwiftUI feature scaffold
+      init        Create a starter .forge.yml configuration file
       help        Show this help message
       --version   Print the current forge version
 
+    INIT OPTIONS:
+      --path <dir>          Directory to create .forge.yml in (default: current directory)
+      --force               Overwrite existing .forge.yml
+
     MAKE OPTIONS:
       --path <dir>          Project root directory (default: current directory)
+      --config <path>       Path to .forge.yml configuration file
       --package             Generate a Package.swift manifest
-      --target <name>       Swift package target name (requires --path)
+      --target <name>       Swift package target name for multi-target packages
       -clean, --clean       Include Clean Architecture layers (Domain + Data)
+      --no-clean            Omit Clean Architecture layers (overrides config)
       --no-domain           Skip Domain layer files (implies --clean)
-      --tests               Generate XCTest files for the architecture
+      --domain, --with-domain Include Domain layer files (overrides config no_domain)
+      --tests               Generate unit test files (XCTest or Swift Testing based on config)
+      --no-tests            Skip generating test files (overrides config)
 
     ARCHITECTURE FLAGS (pick one):
       -mvvm                 Model-View-ViewModel
@@ -91,7 +144,18 @@ struct Command {
       -form                 Form view with two input fields and submit button
       -list                 List view connected to an array in the ViewModel
 
-    When no architecture flag is provided, Forge prompts you interactively.
+    When no architecture flag is provided and no .forge.yml config exists,
+    Forge prompts you interactively.
+
+    CONFIGURATION (.forge.yml):
+      Commit a .forge.yml file to establish team standards. Options:
+      architecture:  mvvm, mvi, viper, vip, mvp
+      binding:       combine, concurrency (Observation framework)
+      testing:       xctest, swift-testing
+      di:            native, factory (Factory library)
+      flags:         clean, no_domain, tests
+      paths:         root, package, target
+      naming:        type_prefix, type_suffix, folder_prefix, folder_suffix
 
     CLEAN ARCHITECTURE:
       Combining any architecture flag with -clean adds Domain layer
@@ -111,9 +175,10 @@ struct Command {
       MVP:        DependencyContainer, View, Presenter, Model
 
       Adding -clean appends Domain and Data layer files to any architecture.
-      Adding --tests appends XCTest files for the selected architecture.
+      Adding --tests appends unit test files for the selected architecture.
 
     EXAMPLES:
+      forge init
       forge make Login
       forge make Login -mvvm
       forge make Login -mvvm -clean
@@ -122,7 +187,49 @@ struct Command {
       forge make Login --path /path/to/MyApp --package
       forge make Login --path /path/to/MyPackage --target FeatureKit
       forge make Login --path /path/to/MyApp --no-domain
+      forge make Login --config .forge.yml
     """
+
+    // MARK: - Subcommand Handlers
+
+    /// Handles `forge init`: creates a starter `.forge.yml` file.
+    static func runInit(arguments: [String]) throws {
+        var path = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        var force = false
+        var index = 1
+
+        while index < arguments.count {
+            let arg = arguments[index]
+            if arg == "--force" || arg == "-f" {
+                force = true
+                index += 1
+                continue
+            }
+            if arg == "--path" {
+                let nextIndex = index + 1
+                guard nextIndex < arguments.count, !arguments[nextIndex].hasPrefix("-") else {
+                    throw ForgeError.invalidArguments("Missing value for --path.")
+                }
+                path = URL(fileURLWithPath: arguments[nextIndex], isDirectory: true)
+                index += 2
+                continue
+            }
+            throw ForgeError.invalidArguments("Unknown option for init: '\(arg)'. Supported: --path <dir>, --force")
+        }
+
+        for filename in ConfigLoader.configFilenames {
+            let candidate = path.appendingPathComponent(filename)
+            if FileManager.default.fileExists(atPath: candidate.path) && !force {
+                throw ForgeError.invalidArguments("\(filename) already exists at '\(candidate.path)'. Use --force to overwrite.")
+            }
+        }
+
+        let targetURL = path.appendingPathComponent(".forge.yml")
+
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        try ProjectConfig.starterTemplate.write(to: targetURL, atomically: true, encoding: .utf8)
+        print("Created .forge.yml at \(targetURL.path)")
+    }
 
     /// Parses CLI arguments into a `Command`, prompting interactively when needed.
     /// - Parameter arguments: All arguments after the program name (should start with `"make"`).
@@ -138,15 +245,16 @@ struct Command {
             throw ForgeError.invalidArguments("Missing feature name.")
         }
 
-        // Initialize default options before argument iteration
-        var projectPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        var shouldCreatePackage = false
-        var packageTarget: String?
-        var shouldSkipDomain = false
-        var shouldGenerateTests = false
+        // CLI argument tracking (nil means not explicitly set on CLI)
+        var explicitProjectPath: URL?
+        var explicitConfigPath: URL?
+        var cliCreatePackage: Bool?
+        var cliPackageTarget: String?
+        var cliSkipDomain: Bool?
+        var cliGenerateTests: Bool?
+        var cliCleanFlag: Bool?
         var selectedPresentation: PresentationArchitecture?
         var selectedCategory: FeatureCategory?
-        var hasCleanFlag = false
         var positional: [String] = []
         var index = 1
 
@@ -155,12 +263,16 @@ struct Command {
             let argument = arguments[index]
 
             // Check argument against supported flag parsers; each helper increments index if matched
-            if try parsePathFlag(argument, arguments: arguments, at: &index, projectPath: &projectPath) { continue }
-            if parsePackageFlag(argument, at: &index, shouldCreatePackage: &shouldCreatePackage) { continue }
-            if try parseTargetFlag(argument, arguments: arguments, at: &index, packageTarget: &packageTarget) { continue }
-            if parseCleanFlag(argument, at: &index, hasCleanFlag: &hasCleanFlag) { continue }
-            if parseNoDomainFlag(argument, at: &index, shouldSkipDomain: &shouldSkipDomain) { continue }
-            if parseTestsFlag(argument, at: &index, shouldGenerateTests: &shouldGenerateTests) { continue }
+            if try parsePathFlag(argument, arguments: arguments, at: &index, projectPath: &explicitProjectPath) { continue }
+            if try parseConfigFlag(argument, arguments: arguments, at: &index, configPath: &explicitConfigPath) { continue }
+            if parsePackageFlag(argument, at: &index, shouldCreatePackage: &cliCreatePackage) { continue }
+            if try parseTargetFlag(argument, arguments: arguments, at: &index, packageTarget: &cliPackageTarget) { continue }
+            if try parseCleanFlag(argument, at: &index, hasCleanFlag: &cliCleanFlag) { continue }
+            if try parseNoCleanFlag(argument, at: &index, hasCleanFlag: &cliCleanFlag) { continue }
+            if try parseNoDomainFlag(argument, at: &index, shouldSkipDomain: &cliSkipDomain) { continue }
+            if try parseDomainFlag(argument, at: &index, shouldSkipDomain: &cliSkipDomain) { continue }
+            if try parseTestsFlag(argument, at: &index, shouldGenerateTests: &cliGenerateTests) { continue }
+            if try parseNoTestsFlag(argument, at: &index, shouldGenerateTests: &cliGenerateTests) { continue }
             if try parseArchitectureFlag(argument, at: &index, selectedPresentation: &selectedPresentation) { continue }
             if try parseCategoryFlag(argument, at: &index, selectedCategory: &selectedCategory) { continue }
             if try parseUnknownFlag(argument) { continue }
@@ -175,16 +287,47 @@ struct Command {
             throw ForgeError.invalidArguments("Expected exactly one feature name.")
         }
 
-        var presentation = selectedPresentation
-        var useCleanLayers = hasCleanFlag
+        // Reject contradictory CLI flags
+        if cliCleanFlag == false && cliSkipDomain == true {
+            throw ForgeError.invalidArguments("Cannot combine '--no-clean' with '--no-domain'.")
+        }
+
+        // Determine starting directory to look for .forge.yml
+        let startingDir = explicitProjectPath ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let loadedConfig = try ConfigLoader.load(explicitPath: explicitConfigPath, startingDirectory: startingDir)
+        let config = loadedConfig?.config ?? ProjectConfig()
+
+        // Resolve destination project path: CLI --path > config paths.root > current directory
+        var projectPath = explicitProjectPath ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        if explicitProjectPath == nil, let root = config.paths.root, !root.isEmpty {
+            let base = loadedConfig?.fileURL.deletingLastPathComponent() ?? projectPath
+            projectPath = (root as NSString).isAbsolutePath
+                ? URL(fileURLWithPath: root, isDirectory: true)
+                : base.appendingPathComponent(root, isDirectory: true)
+        }
+
+        // Resolve options: CLI flags override .forge.yml
+        let shouldCreatePackage = cliCreatePackage ?? config.paths.package
+        let packageTarget = cliPackageTarget ?? config.paths.target
+        var shouldSkipDomain = cliSkipDomain ?? config.flags.noDomain
+        let shouldGenerateTests = cliGenerateTests ?? config.flags.tests
+        var useCleanLayers = cliCleanFlag ?? config.flags.clean
 
         // If user explicitly asks to skip domain files, Clean Architecture layers (Data) are implied
         if shouldSkipDomain {
             useCleanLayers = true
         }
 
-        // If no architecture or clean flag provided, enter interactive terminal mode
-        if presentation == nil && !hasCleanFlag {
+        // CLI negative clean flag overrides everything (including config no_domain)
+        if cliCleanFlag == false {
+            useCleanLayers = false
+            shouldSkipDomain = false
+        }
+
+        // Resolve architecture: CLI flag > config architecture > interactive prompt
+        var presentation = selectedPresentation ?? config.architecture
+
+        if presentation == nil && !useCleanLayers {
             presentation = try Terminal.promptSelection(
                 title: "Which presentation pattern do you want to use?",
                 options: PresentationArchitecture.allCases
@@ -196,7 +339,7 @@ struct Command {
                 )
             }
         } else if presentation == nil {
-            // If only -clean was passed with no specific presentation flag, default to MVVM
+            // If only -clean was passed (or configured) with no specific presentation flag, default to MVVM
             presentation = .mvvm
         }
 
@@ -211,15 +354,20 @@ struct Command {
             shouldSkipDomain: shouldSkipDomain,
             shouldGenerateTests: shouldGenerateTests,
             type: type,
-            category: selectedCategory
+            category: selectedCategory,
+            naming: config.naming,
+            binding: config.binding,
+            testing: config.testing,
+            di: config.di,
+            loadedConfigURL: loadedConfig?.fileURL
         )
     }
 
     /// Executes the command: validates the feature name, generates files, prints results.
     /// - Throws: `ForgeError` on validation failures, file conflicts, or cancellation.
     func run() throws {
-        // Validate and normalize the feature name into PascalCase
-        let feature = try FeatureName(rawValue: featureName)
+        // Validate and normalize the feature name into PascalCase with project naming rules
+        let feature = try FeatureName(rawValue: featureName, naming: naming)
         // Resolve the complete set of required file roles for this architecture
         let resolvedSelection = FeatureFileSelection.all(for: type)
         // Instantiate the code generator configured with parsed command options
@@ -230,12 +378,18 @@ struct Command {
             shouldGenerateTests: shouldGenerateTests,
             shouldSkipDomain: shouldSkipDomain,
             type: type,
-            category: category
+            category: category,
+            binding: binding,
+            testing: testing,
+            di: di
         )
         // Generate templates and write files to disk
         let result = try generator.generate(feature: feature, selection: resolvedSelection)
 
         // Output summary of created files
+        if let configURL = loadedConfigURL {
+            print("Using standards from \(configURL.lastPathComponent)")
+        }
         print("Created \(type.displayName) feature: \(feature.typeName)")
         for file in result.createdFiles {
             print("  + \(file.path)")
@@ -261,11 +415,11 @@ struct Command {
 
     /// Handles `--path <dir>`: sets `projectPath` and advances the index past the value.
     private static func parsePathFlag(
-        _ argument: String, arguments: [String], at index: inout Int, projectPath: inout URL
+        _ argument: String, arguments: [String], at index: inout Int, projectPath: inout URL?
     ) throws -> Bool {
         guard argument == "--path" else { return false }
         let nextIndex = index + 1
-        guard nextIndex < arguments.count else {
+        guard nextIndex < arguments.count, !arguments[nextIndex].hasPrefix("-") else {
             throw ForgeError.invalidArguments("Missing value for --path.")
         }
         projectPath = URL(fileURLWithPath: arguments[nextIndex], isDirectory: true)
@@ -273,9 +427,23 @@ struct Command {
         return true
     }
 
+    /// Handles `--config <path>`: sets `configPath` and advances the index past the value.
+    private static func parseConfigFlag(
+        _ argument: String, arguments: [String], at index: inout Int, configPath: inout URL?
+    ) throws -> Bool {
+        guard argument == "--config" else { return false }
+        let nextIndex = index + 1
+        guard nextIndex < arguments.count, !arguments[nextIndex].hasPrefix("-") else {
+            throw ForgeError.invalidArguments("Missing value for --config.")
+        }
+        configPath = URL(fileURLWithPath: arguments[nextIndex])
+        index += 2
+        return true
+    }
+
     /// Handles `--package`: sets `shouldCreatePackage` and advances the index.
     private static func parsePackageFlag(
-        _ argument: String, at index: inout Int, shouldCreatePackage: inout Bool
+        _ argument: String, at index: inout Int, shouldCreatePackage: inout Bool?
     ) -> Bool {
         guard argument == "--package" else { return false }
         shouldCreatePackage = true
@@ -289,7 +457,7 @@ struct Command {
     ) throws -> Bool {
         guard argument == "--target" else { return false }
         let nextIndex = index + 1
-        guard nextIndex < arguments.count else {
+        guard nextIndex < arguments.count, !arguments[nextIndex].hasPrefix("-") else {
             throw ForgeError.invalidArguments("Missing value for --target.")
         }
         packageTarget = arguments[nextIndex]
@@ -299,30 +467,78 @@ struct Command {
 
     /// Handles `-clean` / `--clean`: sets `hasCleanFlag` and advances the index.
     private static func parseCleanFlag(
-        _ argument: String, at index: inout Int, hasCleanFlag: inout Bool
-    ) -> Bool {
+        _ argument: String, at index: inout Int, hasCleanFlag: inout Bool?
+    ) throws -> Bool {
         guard argument == "-clean" || argument == "--clean" else { return false }
+        if let existing = hasCleanFlag, !existing {
+            throw ForgeError.invalidArguments("Cannot combine '-clean' and '--no-clean'.")
+        }
         hasCleanFlag = true
+        index += 1
+        return true
+    }
+
+    /// Handles `--no-clean`: sets `hasCleanFlag` to false and advances the index.
+    private static func parseNoCleanFlag(
+        _ argument: String, at index: inout Int, hasCleanFlag: inout Bool?
+    ) throws -> Bool {
+        guard argument == "--no-clean" else { return false }
+        if let existing = hasCleanFlag, existing {
+            throw ForgeError.invalidArguments("Cannot combine '-clean' and '--no-clean'.")
+        }
+        hasCleanFlag = false
         index += 1
         return true
     }
 
     /// Handles `--no-domain`: sets `shouldSkipDomain` and advances the index.
     private static func parseNoDomainFlag(
-        _ argument: String, at index: inout Int, shouldSkipDomain: inout Bool
-    ) -> Bool {
+        _ argument: String, at index: inout Int, shouldSkipDomain: inout Bool?
+    ) throws -> Bool {
         guard argument == "--no-domain" else { return false }
+        if let existing = shouldSkipDomain, !existing {
+            throw ForgeError.invalidArguments("Cannot combine '--domain' and '--no-domain'.")
+        }
         shouldSkipDomain = true
+        index += 1
+        return true
+    }
+
+    /// Handles `--domain` / `--with-domain`: sets `shouldSkipDomain` to false and advances the index.
+    private static func parseDomainFlag(
+        _ argument: String, at index: inout Int, shouldSkipDomain: inout Bool?
+    ) throws -> Bool {
+        guard argument == "--domain" || argument == "--with-domain" else { return false }
+        if let existing = shouldSkipDomain, existing {
+            throw ForgeError.invalidArguments("Cannot combine '--domain' and '--no-domain'.")
+        }
+        shouldSkipDomain = false
         index += 1
         return true
     }
 
     /// Handles `--tests`: sets `shouldGenerateTests` and advances the index.
     private static func parseTestsFlag(
-        _ argument: String, at index: inout Int, shouldGenerateTests: inout Bool
-    ) -> Bool {
+        _ argument: String, at index: inout Int, shouldGenerateTests: inout Bool?
+    ) throws -> Bool {
         guard argument == "--tests" else { return false }
+        if let existing = shouldGenerateTests, !existing {
+            throw ForgeError.invalidArguments("Cannot combine '--tests' and '--no-tests'.")
+        }
         shouldGenerateTests = true
+        index += 1
+        return true
+    }
+
+    /// Handles `--no-tests`: sets `shouldGenerateTests` to false and advances the index.
+    private static func parseNoTestsFlag(
+        _ argument: String, at index: inout Int, shouldGenerateTests: inout Bool?
+    ) throws -> Bool {
+        guard argument == "--no-tests" else { return false }
+        if let existing = shouldGenerateTests, existing {
+            throw ForgeError.invalidArguments("Cannot combine '--tests' and '--no-tests'.")
+        }
+        shouldGenerateTests = false
         index += 1
         return true
     }

@@ -75,6 +75,18 @@ def main():
         "--timeout", type=positive_int, default=300,
         help="timeout per command in seconds (default: 300)",
     )
+    parser.add_argument(
+        "--binding", choices=("combine", "concurrency"), default="combine",
+        help="state binding strategy (combine, concurrency; default: combine)",
+    )
+    parser.add_argument(
+        "--testing", choices=("xctest", "swift-testing"), default="xctest",
+        help="unit testing framework (xctest, swift-testing; default: xctest)",
+    )
+    parser.add_argument(
+        "--di", choices=("native", "factory"), default="native",
+        help="dependency injection strategy (native, factory; default: native)",
+    )
     parser.add_argument("--logs-dir", type=Path, default=ROOT / ".build/generated-verification")
     args = parser.parse_args()
 
@@ -115,6 +127,12 @@ def main():
         print(f"[{index}/{len(cases)}] {name}", flush=True)
         try:
             with tempfile.TemporaryDirectory(prefix="forge-verify-") as directory:
+                config_lines = [
+                    f"binding: {args.binding}",
+                    f"testing: {args.testing}",
+                    f"di: {args.di}",
+                ]
+                (Path(directory) / ".forge.yml").write_text("\n".join(config_lines) + "\n")
                 with log_path.open("w") as log:
                     # The module deliberately differs from the feature name.
                     run([
@@ -122,18 +140,30 @@ def main():
                         "--package", "--tests", "--target", target,
                         "--path", directory, *LAYERS[layer], *LAYOUTS[layout],
                     ], ROOT, log, args.timeout)
-                    run([
-                        "swift", "test", "--package-path", str(Path(directory) / "Sample"),
-                        "--jobs", str(args.jobs), "--parallel", "--num-workers", "1",
-                        "--xunit-output", str(xml_path),
-                    ], ROOT, log, args.timeout)
-                    report = ET.parse(xml_path).getroot()
-                    executed = [test for test in report.iter("testcase") if test.find("skipped") is None]
-                    if not executed:
-                        raise RuntimeError("no generated tests executed")
-                    if any(test.find("failure") is not None or test.find("error") is not None for test in executed):
-                        raise RuntimeError("generated tests reported failures")
-            print(f"PASS {name}: {len(executed)} tests", flush=True)
+
+                    if args.testing == "swift-testing":
+                        test_output = run([
+                            "swift", "test", "--package-path", str(Path(directory) / "Sample"),
+                            "--jobs", str(args.jobs),
+                        ], ROOT, log, args.timeout)
+                        match = re.search(r"✔ Test run with (\d+) tests in (\d+) suites passed", test_output)
+                        if not match or int(match.group(1)) == 0:
+                            raise RuntimeError("no generated swift-testing tests passed")
+                        executed_count = int(match.group(1))
+                    else:
+                        run([
+                            "swift", "test", "--package-path", str(Path(directory) / "Sample"),
+                            "--jobs", str(args.jobs), "--parallel", "--num-workers", "1",
+                            "--xunit-output", str(xml_path),
+                        ], ROOT, log, args.timeout)
+                        report = ET.parse(xml_path).getroot()
+                        executed = [test for test in report.iter("testcase") if test.find("skipped") is None]
+                        if not executed:
+                            raise RuntimeError("no generated tests executed")
+                        if any(test.find("failure") is not None or test.find("error") is not None for test in executed):
+                            raise RuntimeError("generated tests reported failures")
+                        executed_count = len(executed)
+            print(f"PASS {name}: {executed_count} tests", flush=True)
         except (OSError, RuntimeError, ET.ParseError) as error:
             failures.append(name)
             show_failure(name, error, log_path)

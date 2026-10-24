@@ -25,21 +25,29 @@ import PackageDescription
 
 let package = Package(
     name: "{{ name }}",
-    platforms: [.iOS(.v15), .macOS(.v12)],
+    platforms: [{% if isConcurrency %}.iOS(.v17), .macOS(.v14){% else %}{% if isSwiftTesting %}.iOS(.v16), .macOS(.v13){% else %}.iOS(.v15), .macOS(.v12){% endif %}{% endif %}],
     products: [
         .library(
             name: "{{ name }}",
             targets: ["{{ name }}"]
         ),
     ],
+{% if isFactory %}
+    dependencies: [
+        .package(url: "https://github.com/hmlongco/Factory.git", from: "2.4.0"),
+    ],
+{% endif %}
     targets: [
         .target(
-            name: "{{ name }}"
+            name: "{{ name }}"{% if isFactory %},
+            dependencies: [
+                .product(name: "Factory", package: "Factory"),
+            ]{% endif %}
         ),
 {% if hasTests %}
         .testTarget(
             name: "{{ name }}Tests",
-            dependencies: ["{{ name }}"]
+            dependencies: [{% if isFactory %}"{{ name }}", .product(name: "Factory", package: "Factory"){% else %}"{{ name }}"{% endif %}]
         ),
 {% endif %}
     ]
@@ -134,6 +142,94 @@ struct {{ name }}UseCase {
         // MARK: MVVM
 
         "cleanMvvmDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(viewModel: self.{{ propertyName }}ViewModel())
+        }
+    }
+{% endif %}
+{% if hasViewModel %}
+    var {{ propertyName }}ViewModel: Factory<{{ name }}ViewModel> {
+        self { @MainActor in
+{% if hasNoDomain %}
+            {{ name }}ViewModel(repository: self.{{ propertyName }}Repository())
+{% else %}
+            {{ name }}ViewModel(useCase: self.{{ propertyName }}UseCase())
+{% endif %}
+        }
+    }
+{% endif %}
+{% if hasNoDomain %}
+    var {{ propertyName }}Repository: Factory<{{ name }}RepositoryImpl> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasUseCase %}
+    var {{ propertyName }}UseCase: Factory<{{ name }}UseCase> {
+        self {
+            {{ name }}UseCase(repository: self.{{ propertyName }}Repository())
+        }
+    }
+{% endif %}
+{% if hasRepository %}
+    var {{ propertyName }}Repository: Factory<{{ name }}Repository> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    var {{ propertyName }}RemoteDataSource: Factory<{{ name }}RemoteDataSource> {
+        self {
+            {{ name }}RemoteDataSource()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasViewModel %}
+    @MainActor
+    static func makeViewModel() -> {{ name }}ViewModel {
+        Container.shared.{{ propertyName }}ViewModel()
+    }
+{% endif %}
+{% if hasNoDomain %}
+    static func makeRepository() -> {{ name }}RepositoryImpl {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasUseCase %}
+    static func makeUseCase() -> {{ name }}UseCase {
+        Container.shared.{{ propertyName }}UseCase()
+    }
+{% endif %}
+{% if hasRepository %}
+    static func makeRepository() -> {{ name }}Repository {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    static func makeRemoteDataSource() -> {{ name }}RemoteDataSource {
+        Container.shared.{{ propertyName }}RemoteDataSource()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -179,10 +275,47 @@ enum {{ name }}DependencyContainer {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "mvvmDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(viewModel: self.{{ propertyName }}ViewModel())
+        }
+    }
+{% endif %}
+{% if hasViewModel %}
+    var {{ propertyName }}ViewModel: Factory<{{ name }}ViewModel> {
+        self { @MainActor in
+            {{ name }}ViewModel()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasViewModel %}
+    @MainActor
+    static func makeViewModel() -> {{ name }}ViewModel {
+        Container.shared.{{ propertyName }}ViewModel()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -199,6 +332,7 @@ enum {{ name }}DependencyContainer {
         }
     {% endif %}
 }
+{% endif %}
 
 """,
 
@@ -206,11 +340,19 @@ enum {{ name }}DependencyContainer {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = State(wrappedValue: viewModel)
+    }
+{% else %}
     @StateObject private var viewModel: {{ name }}ViewModel
 
     init(viewModel: {{ name }}ViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
     }
+{% endif %}
 
     var body: some View {
         Text(viewModel.title)
@@ -228,6 +370,25 @@ struct {{ name }}View: View {
 """,
 
         "mvvmViewModel.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}ViewModel {
+    private(set) var title = "{{ name }}"
+    private(set) var isLoading = false
+    private(set) var errorMessage: String?
+
+    func load() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        errorMessage = nil
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -244,6 +405,7 @@ final class {{ name }}ViewModel: ObservableObject {
         errorMessage = nil
     }
 }
+{% endif %}
 
 """,
 
@@ -251,11 +413,19 @@ final class {{ name }}ViewModel: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = State(wrappedValue: viewModel)
+    }
+{% else %}
     @StateObject private var viewModel: {{ name }}ViewModel
 
     init(viewModel: {{ name }}ViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
     }
+{% endif %}
 
     var body: some View {
         Text(viewModel.{% if hasNoDomain %}response?.title ?? ""{% else %}entity?.title ?? ""{% endif %})
@@ -273,6 +443,47 @@ struct {{ name }}View: View {
 """,
 
         "cleanMvvmViewModel.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}ViewModel {
+    private(set) var {% if hasNoDomain %}response{% else %}entity{% endif %}: {% if hasNoDomain %}{{ name }}Response?{% else %}{{ name }}Entity?{% endif %}
+    private(set) var isLoading = false
+    private(set) var errorMessage: String?
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(repository: {{ name }}RepositoryImpl) {
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(useCase: {{ name }}UseCase) {
+        self.useCase = useCase
+    }
+{% endif %}
+
+    func load() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+{% if hasNoDomain %}
+            response = try await repository.fetch{{ name }}()
+{% else %}
+            entity = try await useCase.execute()
+{% endif %}
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -311,6 +522,7 @@ final class {{ name }}ViewModel: ObservableObject {
         }
     }
 }
+{% endif %}
 
 """,
 
@@ -320,6 +532,24 @@ final class {{ name }}ViewModel: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = State(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        @Bindable var viewModel = viewModel
+        Form {
+            TextField("Field 1", text: $viewModel.field1)
+            TextField("Field 2", text: $viewModel.field2)
+            Button("Submit") {
+                viewModel.submit()
+            }
+        }
+    }
+{% else %}
     @StateObject private var viewModel: {{ name }}ViewModel
 
     init(viewModel: {{ name }}ViewModel) {
@@ -335,6 +565,7 @@ struct {{ name }}View: View {
             }
         }
     }
+{% endif %}
 }
         {% if hasDependencyContainer %}
 #Preview {
@@ -345,6 +576,21 @@ struct {{ name }}View: View {
 """,
 
         "mvvmFormViewModel.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}ViewModel {
+    var field1 = ""
+    var field2 = ""
+
+    func submit() {
+        // Handle form submission
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -357,6 +603,7 @@ final class {{ name }}ViewModel: ObservableObject {
         // Handle form submission
     }
 }
+{% endif %}
 
 """,
 
@@ -366,11 +613,19 @@ final class {{ name }}ViewModel: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = State(wrappedValue: viewModel)
+    }
+{% else %}
     @StateObject private var viewModel: {{ name }}ViewModel
 
     init(viewModel: {{ name }}ViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
     }
+{% endif %}
 
     var body: some View {
         List(viewModel.items) { item in
@@ -390,6 +645,25 @@ struct {{ name }}View: View {
 """,
 
         "mvvmListViewModel.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}ViewModel {
+    private(set) var items: [{{ name }}Item] = []
+
+    func load() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -406,6 +680,7 @@ struct {{ name }}Item: Identifiable {
     let id: UUID
     let title: String
 }
+{% endif %}
 
 """,
 
@@ -415,6 +690,24 @@ struct {{ name }}Item: Identifiable {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = State(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        @Bindable var viewModel = viewModel
+        Form {
+            TextField("Field 1", text: $viewModel.field1)
+            TextField("Field 2", text: $viewModel.field2)
+            Button("Submit") {
+                viewModel.submit()
+            }
+        }
+    }
+{% else %}
     @StateObject private var viewModel: {{ name }}ViewModel
 
     init(viewModel: {{ name }}ViewModel) {
@@ -430,6 +723,7 @@ struct {{ name }}View: View {
             }
         }
     }
+{% endif %}
 }
 {% if hasDependencyContainer %}
 #Preview {
@@ -440,6 +734,34 @@ struct {{ name }}View: View {
 """,
 
         "cleanMvvmFormViewModel.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}ViewModel {
+    var field1 = ""
+    var field2 = ""
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(repository: {{ name }}RepositoryImpl) {
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(useCase: {{ name }}UseCase) {
+        self.useCase = useCase
+    }
+{% endif %}
+
+    func submit() {
+        // Handle form submission
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -465,6 +787,7 @@ final class {{ name }}ViewModel: ObservableObject {
         // Handle form submission
     }
 }
+{% endif %}
 
 """,
 
@@ -474,11 +797,19 @@ final class {{ name }}ViewModel: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var viewModel: {{ name }}ViewModel
+
+    init(viewModel: {{ name }}ViewModel) {
+        _viewModel = State(wrappedValue: viewModel)
+    }
+{% else %}
     @StateObject private var viewModel: {{ name }}ViewModel
 
     init(viewModel: {{ name }}ViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
     }
+{% endif %}
 
     var body: some View {
         List(viewModel.items) { item in
@@ -498,6 +829,38 @@ struct {{ name }}View: View {
 """,
 
         "cleanMvvmListViewModel.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}ViewModel {
+    private(set) var items: [{{ name }}Item] = []
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(repository: {{ name }}RepositoryImpl) {
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(useCase: {{ name }}UseCase) {
+        self.useCase = useCase
+    }
+{% endif %}
+
+    func load() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -527,12 +890,49 @@ struct {{ name }}Item: Identifiable {
     let id: UUID
     let title: String
 }
+{% endif %}
 
 """,
 
         // MARK: MVI
 
         "mviDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(store: self.{{ propertyName }}Store())
+        }
+    }
+{% endif %}
+{% if hasStore %}
+    var {{ propertyName }}Store: Factory<{{ name }}Store> {
+        self { @MainActor in
+            {{ name }}Store(reducer: {{ name }}Reducer())
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasStore %}
+    @MainActor
+    static func makeStore() -> {{ name }}Store {
+        Container.shared.{{ propertyName }}Store()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -542,14 +942,14 @@ enum {{ name }}DependencyContainer {
         {{ name }}View(store: makeStore())
     }
 {% endif %}
-        {% if hasStore %}
-            @MainActor
-            static func makeStore() -> {{ name }}Store {
-                {{ name }}Store(reducer: {{ name }}Reducer())
-            }
+{% if hasStore %}
+    @MainActor
+    static func makeStore() -> {{ name }}Store {
+        {{ name }}Store(reducer: {{ name }}Reducer())
+    }
 {% endif %}
-
 }
+{% endif %}
 
 """,
 
@@ -633,6 +1033,27 @@ struct {{ name }}State: Equatable {
 """,
 
         "mviStore.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Store {
+    private(set) var state: {{ name }}State
+
+    private let reducer: {{ name }}Reducer
+
+    init(state: {{ name }}State = {{ name }}State(), reducer: {{ name }}Reducer) {
+        self.state = state
+        self.reducer = reducer
+    }
+
+    func send(_ intent: {{ name }}Intent) async {
+        reducer.reduce(state: &state, intent: intent)
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -651,6 +1072,7 @@ final class {{ name }}Store: ObservableObject {
         reducer.reduce(state: &state, intent: intent)
     }
 }
+{% endif %}
 
 """,
 
@@ -658,11 +1080,19 @@ final class {{ name }}Store: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var store: {{ name }}Store
+
+    init(store: {{ name }}Store) {
+        _store = State(wrappedValue: store)
+    }
+{% else %}
     @StateObject private var store: {{ name }}Store
 
     init(store: {{ name }}Store) {
         _store = StateObject(wrappedValue: store)
     }
+{% endif %}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -691,6 +1121,94 @@ struct {{ name }}View: View {
 """,
 
         "cleanMviDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(store: self.{{ propertyName }}Store())
+        }
+    }
+{% endif %}
+{% if hasStore %}
+    var {{ propertyName }}Store: Factory<{{ name }}Store> {
+        self { @MainActor in
+{% if hasNoDomain %}
+            {{ name }}Store(repository: self.{{ propertyName }}Repository(), reducer: {{ name }}Reducer())
+{% else %}
+            {{ name }}Store(useCase: self.{{ propertyName }}UseCase(), reducer: {{ name }}Reducer())
+{% endif %}
+        }
+    }
+{% endif %}
+{% if hasNoDomain %}
+    var {{ propertyName }}Repository: Factory<{{ name }}RepositoryImpl> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasUseCase %}
+    var {{ propertyName }}UseCase: Factory<{{ name }}UseCase> {
+        self {
+            {{ name }}UseCase(repository: self.{{ propertyName }}Repository())
+        }
+    }
+{% endif %}
+{% if hasRepository %}
+    var {{ propertyName }}Repository: Factory<{{ name }}Repository> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    var {{ propertyName }}RemoteDataSource: Factory<{{ name }}RemoteDataSource> {
+        self {
+            {{ name }}RemoteDataSource()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasStore %}
+    @MainActor
+    static func makeStore() -> {{ name }}Store {
+        Container.shared.{{ propertyName }}Store()
+    }
+{% endif %}
+{% if hasNoDomain %}
+    static func makeRepository() -> {{ name }}RepositoryImpl {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasUseCase %}
+    static func makeUseCase() -> {{ name }}UseCase {
+        Container.shared.{{ propertyName }}UseCase()
+    }
+{% endif %}
+{% if hasRepository %}
+    static func makeRepository() -> {{ name }}Repository {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    static func makeRemoteDataSource() -> {{ name }}RemoteDataSource {
+        Container.shared.{{ propertyName }}RemoteDataSource()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -732,6 +1250,7 @@ enum {{ name }}DependencyContainer {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
@@ -818,6 +1337,66 @@ struct {{ name }}Item: Equatable, Identifiable {
 """,
 
         "cleanMviStore.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Store {
+    private(set) var state: {{ name }}State
+
+    private let reducer: {{ name }}Reducer
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(state: {{ name }}State = {{ name }}State(), repository: {{ name }}RepositoryImpl, reducer: {{ name }}Reducer) {
+        self.state = state
+        self.repository = repository
+        self.reducer = reducer
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(state: {{ name }}State = {{ name }}State(), useCase: {{ name }}UseCase, reducer: {{ name }}Reducer) {
+        self.state = state
+        self.useCase = useCase
+        self.reducer = reducer
+    }
+{% endif %}
+
+
+{% if isForm %}
+    func updateField1(_ value: String) {
+        reducer.reduce(state: &state, intent: .field1Changed(value))
+    }
+
+    func updateField2(_ value: String) {
+        reducer.reduce(state: &state, intent: .field2Changed(value))
+    }
+{% endif %}
+
+    func send(_ intent: {{ name }}Intent) async {
+        reducer.reduce(state: &state, intent: intent)
+
+        guard case .onAppear = intent else {
+            return
+        }
+
+        do {
+{% if hasNoDomain %}
+            let response = try await repository.fetch{{ name }}()
+            reducer.reduce(state: &state, intent: .didLoad(response))
+{% else %}
+            let entity = try await useCase.execute()
+            reducer.reduce(state: &state, intent: .didLoad(entity))
+{% endif %}
+        } catch {
+            reducer.reduce(state: &state, intent: .didFail(error.localizedDescription))
+        }
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -875,6 +1454,7 @@ final class {{ name }}Store: ObservableObject {
         }
     }
 }
+{% endif %}
 
 """,
 
@@ -884,11 +1464,19 @@ final class {{ name }}Store: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var store: {{ name }}Store
+
+    init(store: {{ name }}Store) {
+        _store = State(wrappedValue: store)
+    }
+{% else %}
     @StateObject private var store: {{ name }}Store
 
     init(store: {{ name }}Store) {
         _store = StateObject(wrappedValue: store)
     }
+{% endif %}
 
     var body: some View {
         Form {
@@ -915,6 +1503,38 @@ struct {{ name }}View: View {
 """,
 
         "mviFormStore.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Store {
+    private(set) var state: {{ name }}State
+
+    private let reducer: {{ name }}Reducer
+
+    init(state: {{ name }}State = {{ name }}State(), reducer: {{ name }}Reducer) {
+        self.state = state
+        self.reducer = reducer
+    }
+
+
+{% if isForm %}
+    func updateField1(_ value: String) {
+        reducer.reduce(state: &state, intent: .field1Changed(value))
+    }
+
+    func updateField2(_ value: String) {
+        reducer.reduce(state: &state, intent: .field2Changed(value))
+    }
+{% endif %}
+
+    func send(_ intent: {{ name }}Intent) async {
+        reducer.reduce(state: &state, intent: intent)
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -944,6 +1564,7 @@ final class {{ name }}Store: ObservableObject {
         reducer.reduce(state: &state, intent: intent)
     }
 }
+{% endif %}
 
 """,
 
@@ -964,11 +1585,19 @@ struct {{ name }}State: Equatable {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var store: {{ name }}Store
+
+    init(store: {{ name }}Store) {
+        _store = State(wrappedValue: store)
+    }
+{% else %}
     @StateObject private var store: {{ name }}Store
 
     init(store: {{ name }}Store) {
         _store = StateObject(wrappedValue: store)
     }
+{% endif %}
 
     var body: some View {
         List(store.state.items) { item in
@@ -988,6 +1617,27 @@ struct {{ name }}View: View {
 """,
 
         "mviListStore.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Store {
+    private(set) var state: {{ name }}State
+
+    private let reducer: {{ name }}Reducer
+
+    init(state: {{ name }}State = {{ name }}State(), reducer: {{ name }}Reducer) {
+        self.state = state
+        self.reducer = reducer
+    }
+
+    func send(_ intent: {{ name }}Intent) async {
+        reducer.reduce(state: &state, intent: intent)
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1006,6 +1656,7 @@ final class {{ name }}Store: ObservableObject {
         reducer.reduce(state: &state, intent: intent)
     }
 }
+{% endif %}
 
 """,
 
@@ -1046,6 +1697,66 @@ protocol {{ name }}RouterInput {}
 """,
 
         "viperDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(presenter: self.{{ propertyName }}Presenter())
+        }
+    }
+{% endif %}
+{% if hasPresenter %}
+    var {{ propertyName }}Presenter: Factory<{{ name }}Presenter> {
+        self { @MainActor in
+            {{ name }}Presenter(interactor: self.{{ propertyName }}Interactor(), router: self.{{ propertyName }}Router())
+        }
+    }
+{% endif %}
+{% if hasInteractor %}
+    var {{ propertyName }}Interactor: Factory<{{ name }}Interactor> {
+        self {
+            {{ name }}Interactor()
+        }
+    }
+{% endif %}
+{% if hasRouter %}
+    var {{ propertyName }}Router: Factory<{{ name }}Router> {
+        self {
+            {{ name }}Router()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasPresenter %}
+    @MainActor
+    static func makePresenter() -> {{ name }}Presenter {
+        Container.shared.{{ propertyName }}Presenter()
+    }
+{% endif %}
+{% if hasInteractor %}
+    static func makeInteractor() -> {{ name }}Interactor {
+        Container.shared.{{ propertyName }}Interactor()
+    }
+{% endif %}
+{% if hasRouter %}
+    static func makeRouter() -> {{ name }}Router {
+        Container.shared.{{ propertyName }}Router()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -1072,6 +1783,7 @@ enum {{ name }}DependencyContainer {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
@@ -1097,6 +1809,29 @@ final class {{ name }}Interactor {
 """,
 
         "viperPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter: {{ name }}PresenterInput {
+    private(set) var title = "{{ name }}"
+
+    private let interactor: {{ name }}Interactor
+    private let router: {{ name }}Router
+
+    init(interactor: {{ name }}Interactor, router: {{ name }}Router) {
+        self.interactor = interactor
+        self.router = router
+    }
+
+    func viewDidLoad() async {
+        let entity = await interactor.load()
+        title = entity.title
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1117,6 +1852,7 @@ final class {{ name }}Presenter: ObservableObject, {{ name }}PresenterInput {
         title = entity.title
     }
 }
+{% endif %}
 
 """,
 
@@ -1135,11 +1871,19 @@ struct {{ name }}Router {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = State(wrappedValue: presenter)
+    }
+{% else %}
     @StateObject private var presenter: {{ name }}Presenter
 
     init(presenter: {{ name }}Presenter) {
         _presenter = StateObject(wrappedValue: presenter)
     }
+{% endif %}
 
     var body: some View {
         Text(presenter.title)
@@ -1162,6 +1906,24 @@ struct {{ name }}View: View {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = State(wrappedValue: presenter)
+    }
+
+    var body: some View {
+        @Bindable var presenter = presenter
+        Form {
+            TextField("Field 1", text: $presenter.field1)
+            TextField("Field 2", text: $presenter.field2)
+            Button("Submit") {
+                presenter.submit()
+            }
+        }
+    }
+{% else %}
     @StateObject private var presenter: {{ name }}Presenter
 
     init(presenter: {{ name }}Presenter) {
@@ -1177,6 +1939,7 @@ struct {{ name }}View: View {
             }
         }
     }
+{% endif %}
 }
 {% if hasDependencyContainer %}
 #Preview {
@@ -1187,6 +1950,29 @@ struct {{ name }}View: View {
 """,
 
         "viperFormPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter {
+    var field1 = ""
+    var field2 = ""
+
+    private let interactor: {{ name }}Interactor
+    private let router: {{ name }}Router
+
+    init(interactor: {{ name }}Interactor, router: {{ name }}Router) {
+        self.interactor = interactor
+        self.router = router
+    }
+
+    func submit() {
+        // Handle form submission
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1207,6 +1993,7 @@ final class {{ name }}Presenter: ObservableObject {
         // Handle form submission
     }
 }
+{% endif %}
 
 """,
 
@@ -1216,11 +2003,19 @@ final class {{ name }}Presenter: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = State(wrappedValue: presenter)
+    }
+{% else %}
     @StateObject private var presenter: {{ name }}Presenter
 
     init(presenter: {{ name }}Presenter) {
         _presenter = StateObject(wrappedValue: presenter)
     }
+{% endif %}
 
     var body: some View {
         List(presenter.items) { item in
@@ -1240,6 +2035,33 @@ struct {{ name }}View: View {
 """,
 
         "viperListPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter {
+    private(set) var items: [{{ name }}Item] = []
+
+    private let interactor: {{ name }}Interactor
+    private let router: {{ name }}Router
+
+    init(interactor: {{ name }}Interactor, router: {{ name }}Router) {
+        self.interactor = interactor
+        self.router = router
+    }
+
+    func viewDidLoad() async {
+        // Load items
+    }
+}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1264,6 +2086,7 @@ struct {{ name }}Item: Identifiable {
     let id: UUID
     let title: String
 }
+{% endif %}
 
 """,
 
@@ -1290,6 +2113,118 @@ protocol {{ name }}RouterInput {}
 """,
 
         "cleanViperDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(presenter: self.{{ propertyName }}Presenter())
+        }
+    }
+{% endif %}
+{% if hasPresenter %}
+    var {{ propertyName }}Presenter: Factory<{{ name }}Presenter> {
+        self { @MainActor in
+            {{ name }}Presenter(interactor: self.{{ propertyName }}Interactor(), router: self.{{ propertyName }}Router())
+        }
+    }
+{% endif %}
+{% if hasInteractor %}
+    var {{ propertyName }}Interactor: Factory<{{ name }}Interactor> {
+        self {
+{% if hasNoDomain %}
+            {{ name }}Interactor(repository: self.{{ propertyName }}Repository())
+{% else %}
+            {{ name }}Interactor(useCase: self.{{ propertyName }}UseCase())
+{% endif %}
+        }
+    }
+{% endif %}
+{% if hasRouter %}
+    var {{ propertyName }}Router: Factory<{{ name }}Router> {
+        self {
+            {{ name }}Router()
+        }
+    }
+{% endif %}
+{% if hasNoDomain %}
+    var {{ propertyName }}Repository: Factory<{{ name }}RepositoryImpl> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasUseCase %}
+    var {{ propertyName }}UseCase: Factory<{{ name }}UseCase> {
+        self {
+            {{ name }}UseCase(repository: self.{{ propertyName }}Repository())
+        }
+    }
+{% endif %}
+{% if hasRepository %}
+    var {{ propertyName }}Repository: Factory<{{ name }}Repository> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    var {{ propertyName }}RemoteDataSource: Factory<{{ name }}RemoteDataSource> {
+        self {
+            {{ name }}RemoteDataSource()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasPresenter %}
+    @MainActor
+    static func makePresenter() -> {{ name }}Presenter {
+        Container.shared.{{ propertyName }}Presenter()
+    }
+{% endif %}
+{% if hasInteractor %}
+    static func makeInteractor() -> {{ name }}Interactor {
+        Container.shared.{{ propertyName }}Interactor()
+    }
+{% endif %}
+{% if hasRouter %}
+    static func makeRouter() -> {{ name }}Router {
+        Container.shared.{{ propertyName }}Router()
+    }
+{% endif %}
+{% if hasNoDomain %}
+    static func makeRepository() -> {{ name }}RepositoryImpl {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasUseCase %}
+    static func makeUseCase() -> {{ name }}UseCase {
+        Container.shared.{{ propertyName }}UseCase()
+    }
+{% endif %}
+{% if hasRepository %}
+    static func makeRepository() -> {{ name }}Repository {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    static func makeRemoteDataSource() -> {{ name }}RemoteDataSource {
+        Container.shared.{{ propertyName }}RemoteDataSource()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -1341,6 +2276,7 @@ enum {{ name }}DependencyContainer {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
@@ -1385,6 +2321,67 @@ final class {{ name }}Interactor {
         // MARK: VIP
 
         "vipDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(interactor: self.{{ propertyName }}Interactor())
+        }
+    }
+{% endif %}
+{% if hasInteractor %}
+    var {{ propertyName }}Interactor: Factory<{{ name }}Interactor> {
+        self { @MainActor in
+            {{ name }}Interactor(presenter: self.{{ propertyName }}Presenter(), worker: self.{{ propertyName }}Worker())
+        }
+    }
+{% endif %}
+{% if hasPresenter %}
+    var {{ propertyName }}Presenter: Factory<{{ name }}Presenter> {
+        self { @MainActor in
+            {{ name }}Presenter()
+        }
+    }
+{% endif %}
+{% if hasWorker %}
+    var {{ propertyName }}Worker: Factory<{{ name }}Worker> {
+        self {
+            {{ name }}Worker()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasInteractor %}
+    @MainActor
+    static func makeInteractor() -> {{ name }}Interactor {
+        Container.shared.{{ propertyName }}Interactor()
+    }
+{% endif %}
+{% if hasPresenter %}
+    @MainActor
+    static func makePresenter() -> {{ name }}Presenter {
+        Container.shared.{{ propertyName }}Presenter()
+    }
+{% endif %}
+{% if hasWorker %}
+    static func makeWorker() -> {{ name }}Worker {
+        Container.shared.{{ propertyName }}Worker()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -1413,10 +2410,45 @@ enum {{ name }}DependencyContainer {
 {% endif %}
 
 }
+{% endif %}
 
 """,
 
         "vipInteractor.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Interactor {
+    private(set) var viewModel = {{ name }}.ViewModel(title: "{{ name }}")
+{% if isForm %}
+    var field1 = ""
+    var field2 = ""
+
+    func submit() {
+        // Handle form submission.
+    }
+{% endif %}
+{% if isList %}
+    var items: [{{ name }}.Item] { viewModel.items }
+{% endif %}
+
+    private let presenter: {{ name }}Presenter
+    private let worker: {{ name }}Worker
+
+    init(presenter: {{ name }}Presenter, worker: {{ name }}Worker) {
+        self.presenter = presenter
+        self.worker = worker
+    }
+
+    func load() async {
+        let response = await worker.fetch()
+        viewModel = presenter.present(response: response)
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1448,6 +2480,7 @@ final class {{ name }}Interactor: ObservableObject {
         viewModel = presenter.present(response: response)
     }
 }
+{% endif %}
 
 """,
 
@@ -1495,11 +2528,19 @@ final class {{ name }}Presenter {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var interactor: {{ name }}Interactor
+
+    init(interactor: {{ name }}Interactor) {
+        _interactor = State(wrappedValue: interactor)
+    }
+{% else %}
     @StateObject private var interactor: {{ name }}Interactor
 
     init(interactor: {{ name }}Interactor) {
         _interactor = StateObject(wrappedValue: interactor)
     }
+{% endif %}
 
     var body: some View {
         Text(interactor.viewModel.title)
@@ -1522,6 +2563,24 @@ struct {{ name }}View: View {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var interactor: {{ name }}Interactor
+
+    init(interactor: {{ name }}Interactor) {
+        _interactor = State(wrappedValue: interactor)
+    }
+
+    var body: some View {
+        @Bindable var interactor = interactor
+        Form {
+            TextField("Field 1", text: $interactor.field1)
+            TextField("Field 2", text: $interactor.field2)
+            Button("Submit") {
+                interactor.submit()
+            }
+        }
+    }
+{% else %}
     @StateObject private var interactor: {{ name }}Interactor
 
     init(interactor: {{ name }}Interactor) {
@@ -1537,6 +2596,7 @@ struct {{ name }}View: View {
             }
         }
     }
+{% endif %}
 }
         {% if hasDependencyContainer %}
 #Preview {
@@ -1564,11 +2624,19 @@ final class {{ name }}Presenter {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var interactor: {{ name }}Interactor
+
+    init(interactor: {{ name }}Interactor) {
+        _interactor = State(wrappedValue: interactor)
+    }
+{% else %}
     @StateObject private var interactor: {{ name }}Interactor
 
     init(interactor: {{ name }}Interactor) {
         _interactor = StateObject(wrappedValue: interactor)
     }
+{% endif %}
 
     var body: some View {
         List(interactor.items) { item in
@@ -1614,6 +2682,107 @@ struct {{ name }}Worker {
 """,
 
         "cleanVipDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(interactor: self.{{ propertyName }}Interactor())
+        }
+    }
+{% endif %}
+{% if hasInteractor %}
+    var {{ propertyName }}Interactor: Factory<{{ name }}Interactor> {
+        self { @MainActor in
+{% if hasNoDomain %}
+            {{ name }}Interactor(presenter: self.{{ propertyName }}Presenter(), repository: self.{{ propertyName }}Repository())
+{% else %}
+            {{ name }}Interactor(presenter: self.{{ propertyName }}Presenter(), useCase: self.{{ propertyName }}UseCase())
+{% endif %}
+        }
+    }
+{% endif %}
+{% if hasPresenter %}
+    var {{ propertyName }}Presenter: Factory<{{ name }}Presenter> {
+        self { @MainActor in
+            {{ name }}Presenter()
+        }
+    }
+{% endif %}
+{% if hasNoDomain %}
+    var {{ propertyName }}Repository: Factory<{{ name }}RepositoryImpl> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasUseCase %}
+    var {{ propertyName }}UseCase: Factory<{{ name }}UseCase> {
+        self {
+            {{ name }}UseCase(repository: self.{{ propertyName }}Repository())
+        }
+    }
+{% endif %}
+{% if hasRepository %}
+    var {{ propertyName }}Repository: Factory<{{ name }}Repository> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    var {{ propertyName }}RemoteDataSource: Factory<{{ name }}RemoteDataSource> {
+        self {
+            {{ name }}RemoteDataSource()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasInteractor %}
+    @MainActor
+    static func makeInteractor() -> {{ name }}Interactor {
+        Container.shared.{{ propertyName }}Interactor()
+    }
+{% endif %}
+{% if hasPresenter %}
+    @MainActor
+    static func makePresenter() -> {{ name }}Presenter {
+        Container.shared.{{ propertyName }}Presenter()
+    }
+{% endif %}
+{% if hasNoDomain %}
+    static func makeRepository() -> {{ name }}RepositoryImpl {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasUseCase %}
+    static func makeUseCase() -> {{ name }}UseCase {
+        Container.shared.{{ propertyName }}UseCase()
+    }
+{% endif %}
+{% if hasRepository %}
+    static func makeRepository() -> {{ name }}Repository {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    static func makeRemoteDataSource() -> {{ name }}RemoteDataSource {
+        Container.shared.{{ propertyName }}RemoteDataSource()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -1661,10 +2830,63 @@ enum {{ name }}DependencyContainer {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "cleanVipInteractor.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Interactor {
+    private(set) var viewModel = {{ name }}.ViewModel(title: "{{ name }}")
+{% if isForm %}
+    var field1 = ""
+    var field2 = ""
+
+    func submit() {
+        // Handle form submission.
+    }
+{% endif %}
+{% if isList %}
+    var items: [{{ name }}.Item] { viewModel.items }
+{% endif %}
+
+    private let presenter: {{ name }}Presenter
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(presenter: {{ name }}Presenter, repository: {{ name }}RepositoryImpl) {
+        self.presenter = presenter
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(presenter: {{ name }}Presenter, useCase: {{ name }}UseCase) {
+        self.presenter = presenter
+        self.useCase = useCase
+    }
+{% endif %}
+
+    func load() async {
+        do {
+{% if hasNoDomain %}
+            let response = try await repository.fetch{{ name }}()
+            viewModel = presenter.present(response: response)
+{% else %}
+            let entity = try await useCase.execute()
+            viewModel = presenter.present(entity: entity)
+{% endif %}
+        } catch {
+            viewModel = {{ name }}.ViewModel(title: error.localizedDescription)
+        }
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1714,6 +2936,7 @@ final class {{ name }}Interactor: ObservableObject {
         }
     }
 }
+{% endif %}
 
 """,
 
@@ -1744,6 +2967,42 @@ final class {{ name }}Presenter {
         // MARK: MVP
 
         "mvpDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(presenter: self.{{ propertyName }}Presenter())
+        }
+    }
+{% endif %}
+{% if hasPresenter %}
+    var {{ propertyName }}Presenter: Factory<{{ name }}Presenter> {
+        self { @MainActor in
+            {{ name }}Presenter(model: {{ name }}Model(title: "{{ name }}"))
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasPresenter %}
+    @MainActor
+    static func makePresenter() -> {{ name }}Presenter {
+        Container.shared.{{ propertyName }}Presenter()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -1761,6 +3020,7 @@ enum {{ name }}DependencyContainer {
 {% endif %}
 
 }
+{% endif %}
 
 """,
 
@@ -1775,6 +3035,26 @@ struct {{ name }}Model: Equatable {
 """,
 
         "mvpPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter {
+    private(set) var title = "{{ name }}"
+
+    private let model: {{ name }}Model
+
+    init(model: {{ name }}Model) {
+        self.model = model
+    }
+
+    func load() async {
+        title = model.title
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1792,6 +3072,7 @@ final class {{ name }}Presenter: ObservableObject {
         title = model.title
     }
 }
+{% endif %}
 
 """,
 
@@ -1799,11 +3080,19 @@ final class {{ name }}Presenter: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = State(wrappedValue: presenter)
+    }
+{% else %}
     @StateObject private var presenter: {{ name }}Presenter
 
     init(presenter: {{ name }}Presenter) {
         _presenter = StateObject(wrappedValue: presenter)
     }
+{% endif %}
 
     var body: some View {
         Text(presenter.title)
@@ -1826,6 +3115,24 @@ struct {{ name }}View: View {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = State(wrappedValue: presenter)
+    }
+
+    var body: some View {
+        @Bindable var presenter = presenter
+        Form {
+            TextField("Field 1", text: $presenter.field1)
+            TextField("Field 2", text: $presenter.field2)
+            Button("Submit") {
+                presenter.submit()
+            }
+        }
+    }
+{% else %}
     @StateObject private var presenter: {{ name }}Presenter
 
     init(presenter: {{ name }}Presenter) {
@@ -1841,6 +3148,7 @@ struct {{ name }}View: View {
             }
         }
     }
+{% endif %}
 }
         {% if hasDependencyContainer %}
 #Preview {
@@ -1851,6 +3159,27 @@ struct {{ name }}View: View {
 """,
 
         "mvpFormPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter {
+    var field1 = ""
+    var field2 = ""
+
+    private let model: {{ name }}Model
+
+    init(model: {{ name }}Model) {
+        self.model = model
+    }
+
+    func submit() {
+        // Handle form submission
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1869,6 +3198,7 @@ final class {{ name }}Presenter: ObservableObject {
         // Handle form submission
     }
 }
+{% endif %}
 
 """,
 
@@ -1878,11 +3208,19 @@ final class {{ name }}Presenter: ObservableObject {
 import SwiftUI
 
 struct {{ name }}View: View {
+{% if isConcurrency %}
+    @State private var presenter: {{ name }}Presenter
+
+    init(presenter: {{ name }}Presenter) {
+        _presenter = State(wrappedValue: presenter)
+    }
+{% else %}
     @StateObject private var presenter: {{ name }}Presenter
 
     init(presenter: {{ name }}Presenter) {
         _presenter = StateObject(wrappedValue: presenter)
     }
+{% endif %}
 
     var body: some View {
         List(presenter.items) { item in
@@ -1902,6 +3240,26 @@ struct {{ name }}View: View {
 """,
 
         "mvpListPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter {
+    private(set) var items: [{{ name }}Item] = []
+
+    private let model: {{ name }}Model
+
+    init(model: {{ name }}Model) {
+        self.model = model
+    }
+
+    func load() async {
+        // Load items
+    }
+}
+{% else %}
 import Combine
 import Foundation
 
@@ -1919,6 +3277,7 @@ final class {{ name }}Presenter: ObservableObject {
         // Load items
     }
 }
+{% endif %}
 
 struct {{ name }}Item: Identifiable {
     let id: UUID
@@ -1928,6 +3287,94 @@ struct {{ name }}Item: Identifiable {
 """,
 
         "cleanMvpDependencyContainer.stencil": """
+{% if isFactory %}
+import Factory
+import SwiftUI
+
+extension Container {
+{% if hasView %}
+    var {{ propertyName }}View: Factory<{{ name }}View> {
+        self { @MainActor in
+            {{ name }}View(presenter: self.{{ propertyName }}Presenter())
+        }
+    }
+{% endif %}
+{% if hasPresenter %}
+    var {{ propertyName }}Presenter: Factory<{{ name }}Presenter> {
+        self { @MainActor in
+{% if hasNoDomain %}
+            {{ name }}Presenter(model: {{ name }}Model(title: "{{ name }}"), repository: self.{{ propertyName }}Repository())
+{% else %}
+            {{ name }}Presenter(model: {{ name }}Model(title: "{{ name }}"), useCase: self.{{ propertyName }}UseCase())
+{% endif %}
+        }
+    }
+{% endif %}
+{% if hasNoDomain %}
+    var {{ propertyName }}Repository: Factory<{{ name }}RepositoryImpl> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasUseCase %}
+    var {{ propertyName }}UseCase: Factory<{{ name }}UseCase> {
+        self {
+            {{ name }}UseCase(repository: self.{{ propertyName }}Repository())
+        }
+    }
+{% endif %}
+{% if hasRepository %}
+    var {{ propertyName }}Repository: Factory<{{ name }}Repository> {
+        self {
+            {{ name }}RepositoryImpl(remoteDataSource: self.{{ propertyName }}RemoteDataSource())
+        }
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    var {{ propertyName }}RemoteDataSource: Factory<{{ name }}RemoteDataSource> {
+        self {
+            {{ name }}RemoteDataSource()
+        }
+    }
+{% endif %}
+}
+
+enum {{ name }}DependencyContainer {
+{% if hasView %}
+    @MainActor
+    static func makeView() -> {{ name }}View {
+        Container.shared.{{ propertyName }}View()
+    }
+{% endif %}
+{% if hasPresenter %}
+    @MainActor
+    static func makePresenter() -> {{ name }}Presenter {
+        Container.shared.{{ propertyName }}Presenter()
+    }
+{% endif %}
+{% if hasNoDomain %}
+    static func makeRepository() -> {{ name }}RepositoryImpl {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasUseCase %}
+    static func makeUseCase() -> {{ name }}UseCase {
+        Container.shared.{{ propertyName }}UseCase()
+    }
+{% endif %}
+{% if hasRepository %}
+    static func makeRepository() -> {{ name }}Repository {
+        Container.shared.{{ propertyName }}Repository()
+    }
+{% endif %}
+{% if hasRemoteDataSource %}
+    static func makeRemoteDataSource() -> {{ name }}RemoteDataSource {
+        Container.shared.{{ propertyName }}RemoteDataSource()
+    }
+{% endif %}
+}
+{% else %}
 import SwiftUI
 
 enum {{ name }}DependencyContainer {
@@ -1969,10 +3416,86 @@ enum {{ name }}DependencyContainer {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "cleanMvpPresenter.stencil": """
+{% if isConcurrency %}
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class {{ name }}Presenter {
+{% if isForm %}
+    var field1 = ""
+    var field2 = ""
+{% else %}
+{% if isList %}
+    private(set) var items: [{{ name }}Item] = []
+{% else %}
+    private(set) var title = "{{ name }}"
+{% endif %}
+{% endif %}
+
+    private let model: {{ name }}Model
+{% if hasNoDomain %}
+    private let repository: {{ name }}RepositoryImpl
+
+    init(model: {{ name }}Model, repository: {{ name }}RepositoryImpl) {
+        self.model = model
+        self.repository = repository
+    }
+{% else %}
+    private let useCase: {{ name }}UseCase
+
+    init(model: {{ name }}Model, useCase: {{ name }}UseCase) {
+        self.model = model
+        self.useCase = useCase
+    }
+{% endif %}
+
+{% if isForm %}
+    func submit() {
+        // Handle form submission.
+    }
+{% else %}
+    func load() async {
+        do {
+{% if hasNoDomain %}
+            let response = try await repository.fetch{{ name }}()
+{% if isList %}
+            items = [{{ name }}Item(id: response.id, title: response.title)]
+{% else %}
+            title = response.title
+{% endif %}
+{% else %}
+            let entity = try await useCase.execute()
+{% if isList %}
+            items = [{{ name }}Item(id: entity.id, title: entity.title)]
+{% else %}
+            title = entity.title
+{% endif %}
+{% endif %}
+        } catch {
+{% if isList %}
+            items = []
+{% else %}
+            title = model.title
+{% endif %}
+        }
+    }
+{% endif %}
+}
+{% if isList %}
+
+struct {{ name }}Item: Identifiable {
+    let id: UUID
+    let title: String
+}
+{% endif %}
+{% else %}
 import Combine
 import Foundation
 
@@ -2044,6 +3567,7 @@ struct {{ name }}Item: Identifiable {
     let id: UUID
     let title: String
 }
+{% endif %}
 {% endif %}
 
 """,

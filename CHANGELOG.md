@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- **Configurable Dependency Injection Strategy (`di: native | factory`)**: Choose between Forge's self-contained `native` static container or Michael Long's third-party [Factory](https://github.com/hmlongco/Factory) library (`di: factory`) in `.forge.yml`. When `factory` is selected, Forge generates `extension Container` property registrations, delegates `enum FeatureDependencyContainer` static factory methods to `Container.shared`, and automatically adds Factory package and target dependencies to generated `Package.swift` files. Defaults to `native` for backward compatibility.
+- **Configurable Test Framework (`testing: xctest | swift-testing`)**: Select between Apple's traditional `XCTest` or modern `Swift Testing` (`import Testing`, `@Suite`, `@Test`, `#expect`) in `.forge.yml`. Defaults to `xctest` for backward compatibility.
+- **Configurable State Binding Strategy (`binding: combine | concurrency`)**: Choose between traditional Apple Combine (`ObservableObject`, `@Published`, `@StateObject`) or modern Swift Concurrency & Observation (`@Observable`, `@State`, `@Bindable`, `import Observation`) in `.forge.yml`. Defaults to `combine` for backward compatibility.
+- **Project Configuration (`.forge.yml`)**: Commit repository standards for default architecture, project flags (`clean`, `tests`, `no_domain`), output paths, and type/folder naming rules.
+- **`forge init` Subcommand**: Quickly scaffold a starter `.forge.yml` file with team defaults and commented options.
+- **Negative & Override Flags**: Added `--no-clean` and `--no-tests` to allow explicit overriding of `.forge.yml` standards from the CLI.
+
 ### Removed
 - Removed support for The Composable Architecture (`-tca`).
 

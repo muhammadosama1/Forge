@@ -28,6 +28,36 @@ struct FeatureGenerator {
     let type: FeatureType
     /// Optional UI pattern category (form, list).
     let category: FeatureCategory?
+    /// Reactive state-binding mechanism (Combine or Swift Concurrency).
+    let binding: BindingStrategy
+    /// Unit testing framework (XCTest or Swift Testing).
+    let testing: TestFramework
+    /// Dependency injection strategy (Native or Factory).
+    let di: DependencyInjectionStrategy
+
+    init(
+        projectPath: URL,
+        shouldCreatePackage: Bool,
+        packageTarget: String?,
+        shouldGenerateTests: Bool,
+        shouldSkipDomain: Bool,
+        type: FeatureType,
+        category: FeatureCategory?,
+        binding: BindingStrategy = .combine,
+        testing: TestFramework = .xctest,
+        di: DependencyInjectionStrategy = .native
+    ) {
+        self.projectPath = projectPath
+        self.shouldCreatePackage = shouldCreatePackage
+        self.packageTarget = packageTarget
+        self.shouldGenerateTests = shouldGenerateTests
+        self.shouldSkipDomain = shouldSkipDomain
+        self.type = type
+        self.category = category
+        self.binding = binding
+        self.testing = testing
+        self.di = di
+    }
 
     /// Renders all template files for the given feature and writes them to disk.
     /// Skips existing files (throws `ForgeError.fileAlreadyExists`).
@@ -80,6 +110,7 @@ struct FeatureGenerator {
         // Build the shared template context map — reused for every file in this generation run
         var sharedContext = activeSelection.contextMap
         sharedContext["name"] = feature.typeName
+        sharedContext["propertyName"] = feature.propertyName
         // SwiftPM replaces hyphens in target names when forming Swift module names.
         sharedContext["moduleName"] = targetName.replacingOccurrences(of: "-", with: "_")
         sharedContext["isClean"] = type.hasCleanLayers
@@ -89,6 +120,15 @@ struct FeatureGenerator {
         }
         if shouldSkipDomain {
             sharedContext["hasNoDomain"] = true
+        }
+        if binding == .concurrency {
+            sharedContext["isConcurrency"] = true
+        }
+        if testing == .swiftTesting {
+            sharedContext["isSwiftTesting"] = true
+        }
+        if di == .factory {
+            sharedContext["isFactory"] = true
         }
         if let category {
             switch category {
@@ -123,6 +163,9 @@ struct FeatureGenerator {
             let packageContent = try TemplateRenderer.render("swiftPackage.stencil", context: [
                 "name": targetName,
                 "hasTests": shouldGenerateTests,
+                "isConcurrency": binding == .concurrency,
+                "isSwiftTesting": testing == .swiftTesting,
+                "isFactory": di == .factory,
             ])
             let packageUrl = featureRoot.appendingPathComponent("Package.swift")
             files.append(GeneratedFile(url: packageUrl, content: packageContent))

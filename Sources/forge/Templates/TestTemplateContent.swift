@@ -2,6 +2,58 @@
 enum TestTemplateContent {
     static let files: [String: String] = [
         "viewModelTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}ViewModelTests {
+    @Test @MainActor
+{% if isForm %}
+    func formFieldsCanBeEdited() {
+        let sut = {{ name }}DependencyContainer.makeViewModel()
+
+        sut.field1 = "First value"
+        sut.field2 = "Second value"
+
+        #expect(sut.field1 == "First value")
+        #expect(sut.field2 == "Second value")
+    }
+{% else %}
+{% if isList %}
+    func listStartsEmpty() {
+        let sut = {{ name }}DependencyContainer.makeViewModel()
+        #expect(sut.items.isEmpty)
+    }
+{% else %}
+    func loadFinishesWithoutAnError() async {
+        let sut = {{ name }}DependencyContainer.makeViewModel()
+{% if isClean %}
+{% if hasNoDomain %}
+        #expect(sut.response == nil)
+{% else %}
+        #expect(sut.entity == nil)
+{% endif %}
+{% endif %}
+
+        await sut.load()
+
+{% if isClean %}
+{% if hasNoDomain %}
+        #expect(sut.response?.title == "{{ name }}")
+{% else %}
+        #expect(sut.entity?.title == "{{ name }}")
+{% endif %}
+{% else %}
+        #expect(sut.title == "{{ name }}")
+{% endif %}
+        #expect(!sut.isLoading)
+        #expect(sut.errorMessage == nil)
+    }
+{% endif %}
+{% endif %}
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -51,10 +103,74 @@ final class {{ name }}ViewModelTests: XCTestCase {
 {% endif %}
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "storeTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}StoreTests {
+    @Test @MainActor
+{% if isForm %}
+    func fieldUpdatesReachState() {
+        let sut = {{ name }}DependencyContainer.makeStore()
+
+        sut.updateField1("First value")
+        sut.updateField2("Second value")
+
+        #expect(sut.state.field1 == "First value")
+        #expect(sut.state.field2 == "Second value")
+    }
+{% else %}
+{% if isList %}
+{% if isClean %}
+    func onAppearLoadsItems() async {
+        let sut = {{ name }}DependencyContainer.makeStore()
+        #expect(sut.state.items.isEmpty)
+
+        await sut.send(.onAppear)
+
+        #expect(sut.state.items.count == 1)
+        #expect(sut.state.items.first?.title == "{{ name }}")
+        #expect(!sut.state.isLoading)
+        #expect(sut.state.errorMessage == nil)
+    }
+{% else %}
+    func didLoadReplacesItems() async {
+        let sut = {{ name }}DependencyContainer.makeStore()
+        let item = {{ name }}Item(id: UUID(), title: "Loaded item")
+
+        await sut.send(.didLoad([item]))
+
+        #expect(sut.state.items == [item])
+        #expect(!sut.state.isLoading)
+    }
+{% endif %}
+{% else %}
+    func onAppearFinishesLoading() async {
+        let sut = {{ name }}DependencyContainer.makeStore()
+
+        await sut.send(.onAppear)
+
+        #expect(sut.state.title == "{{ name }}")
+        #expect(!sut.state.isLoading)
+        #expect(sut.state.errorMessage == nil)
+{% if isClean %}
+{% if hasNoDomain %}
+        #expect(sut.state.response?.title == "{{ name }}")
+{% else %}
+        #expect(sut.state.entity?.title == "{{ name }}")
+{% endif %}
+{% endif %}
+    }
+{% endif %}
+{% endif %}
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -115,10 +231,115 @@ final class {{ name }}StoreTests: XCTestCase {
 {% endif %}
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "reducerTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}ReducerTests {
+{% if isForm %}
+    @Test func fieldChangesUpdateOnlyTheirField() {
+        let sut = {{ name }}Reducer()
+        var state = {{ name }}State()
+
+        sut.reduce(state: &state, intent: .field1Changed("First value"))
+        #expect(state.field1 == "First value")
+        #expect(state.field2 == "")
+
+        sut.reduce(state: &state, intent: .field2Changed("Second value"))
+        #expect(state.field1 == "First value")
+        #expect(state.field2 == "Second value")
+    }
+{% else %}
+    @Test func onAppearResetsLoadingState() {
+        let sut = {{ name }}Reducer()
+        var state = {{ name }}State()
+        state.isLoading = true
+{% if isClean %}
+        state.errorMessage = "Previous error"
+{% else %}
+{% if isList %}
+{% else %}
+        state.errorMessage = "Previous error"
+{% endif %}
+{% endif %}
+
+        sut.reduce(state: &state, intent: .onAppear)
+
+{% if isClean %}
+        #expect(state.isLoading)
+        #expect(state.errorMessage == nil)
+{% else %}
+        #expect(!state.isLoading)
+{% if isList %}
+{% else %}
+        #expect(state.errorMessage == nil)
+{% endif %}
+{% endif %}
+    }
+{% endif %}
+{% if isClean %}
+
+    @Test func didLoadStoresValueAndFinishesLoading() {
+        let sut = {{ name }}Reducer()
+        var state = {{ name }}State()
+        state.isLoading = true
+{% if hasNoDomain %}
+        let value = {{ name }}Response(id: UUID(), title: "Loaded value")
+{% else %}
+        let value = {{ name }}Entity(id: UUID(), title: "Loaded value")
+{% endif %}
+
+        sut.reduce(state: &state, intent: .didLoad(value))
+
+{% if hasNoDomain %}
+        #expect(state.response == value)
+{% else %}
+        #expect(state.entity == value)
+{% endif %}
+        #expect(state.title == "Loaded value")
+        #expect(!state.isLoading)
+{% if isList %}
+        #expect(state.items.count == 1)
+        #expect(state.items.first?.id == value.id)
+        #expect(state.items.first?.title == value.title)
+{% endif %}
+    }
+
+    @Test func didFailRecordsErrorAndFinishesLoading() {
+        let sut = {{ name }}Reducer()
+        var state = {{ name }}State()
+        state.isLoading = true
+
+        sut.reduce(state: &state, intent: .didFail("Request failed"))
+
+        #expect(state.errorMessage == "Request failed")
+        #expect(!state.isLoading)
+    }
+{% else %}
+{% if isList %}
+
+    @Test func didLoadReplacesItemsAndFinishesLoading() {
+        let sut = {{ name }}Reducer()
+        var state = {{ name }}State()
+        state.items = [{{ name }}Item(id: UUID(), title: "Old item")]
+        state.isLoading = true
+        let item = {{ name }}Item(id: UUID(), title: "New item")
+
+        sut.reduce(state: &state, intent: .didLoad([item]))
+
+        #expect(state.items == [item])
+        #expect(!state.isLoading)
+    }
+{% endif %}
+{% endif %}
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -220,10 +441,105 @@ final class {{ name }}ReducerTests: XCTestCase {
 {% endif %}
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "presenterTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}PresenterTests {
+    @Test @MainActor
+{% if isVIP %}
+    func presentMapsTitleToViewModel() {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+{% if isClean %}
+{% if hasNoDomain %}
+        let response = {{ name }}Response(id: UUID(), title: "Presented title")
+        let viewModel = sut.present(response: response)
+{% else %}
+        let entity = {{ name }}Entity(id: UUID(), title: "Presented title")
+        let viewModel = sut.present(entity: entity)
+{% endif %}
+{% else %}
+        let response = {{ name }}.Response(title: "Presented title")
+        let viewModel = sut.present(response: response)
+{% endif %}
+
+        #expect(viewModel.title == "Presented title")
+    }
+{% else %}
+{% if isForm %}
+    func formFieldsCanBeEdited() {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+
+        sut.field1 = "First value"
+        sut.field2 = "Second value"
+
+        #expect(sut.field1 == "First value")
+        #expect(sut.field2 == "Second value")
+    }
+{% else %}
+{% if isList %}
+{% if isMVP %}
+{% if isClean %}
+    func loadPopulatesItems() async {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+        #expect(sut.items.isEmpty)
+
+        await sut.load()
+
+        #expect(sut.items.count == 1)
+        #expect(sut.items.first?.title == "{{ name }}")
+    }
+{% else %}
+    func listStartsEmpty() {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+        #expect(sut.items.isEmpty)
+    }
+{% endif %}
+{% else %}
+    func listStartsEmpty() {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+        #expect(sut.items.isEmpty)
+    }
+{% endif %}
+{% else %}
+{% if isMVP %}
+{% if isClean %}
+    func loadUsesRepositoryTitle() async {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+
+        await sut.load()
+
+        #expect(sut.title == "{{ name }}")
+    }
+{% else %}
+    func loadUsesModelTitle() async {
+        let sut = {{ name }}Presenter(model: {{ name }}Model(title: "Model title"))
+
+        await sut.load()
+
+        #expect(sut.title == "Model title")
+    }
+{% endif %}
+{% else %}
+    func viewDidLoadUsesInteractorTitle() async {
+        let sut = {{ name }}DependencyContainer.makePresenter()
+
+        await sut.viewDidLoad()
+
+        #expect(sut.title == "{{ name }}")
+    }
+{% endif %}
+{% endif %}
+{% endif %}
+{% endif %}
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -315,10 +631,53 @@ final class {{ name }}PresenterTests: XCTestCase {
 {% endif %}
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "interactorTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}InteractorTests {
+    @Test @MainActor
+{% if isVIP %}
+{% if isForm %}
+    func formFieldsCanBeEdited() {
+        let sut = {{ name }}DependencyContainer.makeInteractor()
+
+        sut.field1 = "First value"
+        sut.field2 = "Second value"
+
+        #expect(sut.field1 == "First value")
+        #expect(sut.field2 == "Second value")
+    }
+{% else %}
+    func loadUpdatesViewModel() async {
+        let sut = {{ name }}DependencyContainer.makeInteractor()
+
+        await sut.load()
+
+        #expect(sut.viewModel.title == "{{ name }}")
+{% if isList %}
+        #expect(sut.items.count == 1)
+        #expect(sut.items.first?.title == "{{ name }}")
+{% endif %}
+    }
+{% endif %}
+{% else %}
+    func loadReturnsFeatureData() async {
+        let sut = {{ name }}DependencyContainer.makeInteractor()
+
+        let value = await sut.load()
+
+        #expect(value.title == "{{ name }}")
+    }
+{% endif %}
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -358,10 +717,57 @@ final class {{ name }}InteractorTests: XCTestCase {
     }
 {% endif %}
 }
+{% endif %}
 
 """,
 
         "useCaseTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}UseCaseTests {
+    @Test func executeReturnsRepositoryValue() async throws {
+        let expected = {{ name }}Entity(id: UUID(), title: "Repository value")
+        let repository = {{ name }}UseCaseRepositoryStub(result: .success(expected))
+        let sut = {{ name }}UseCase(repository: repository)
+
+        let entity = try await sut.execute()
+
+        #expect(entity == expected)
+        #expect(repository.fetchCount == 1)
+    }
+
+    @Test func executePropagatesRepositoryError() async {
+        let repository = {{ name }}UseCaseRepositoryStub(result: .failure(.unavailable))
+        let sut = {{ name }}UseCase(repository: repository)
+
+        await #expect(throws: {{ name }}UseCaseRepositoryStub.Failure.unavailable) {
+            try await sut.execute()
+        }
+        #expect(repository.fetchCount == 1)
+    }
+}
+
+private final class {{ name }}UseCaseRepositoryStub: {{ name }}Repository {
+    enum Failure: Error, Equatable {
+        case unavailable
+    }
+
+    private let result: Result<{{ name }}Entity, Failure>
+    private(set) var fetchCount = 0
+
+    init(result: Result<{{ name }}Entity, Failure>) {
+        self.result = result
+    }
+
+    func fetch{{ name }}() async throws -> {{ name }}Entity {
+        fetchCount += 1
+        return try result.get()
+    }
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -408,10 +814,27 @@ private final class {{ name }}UseCaseRepositoryStub: {{ name }}Repository {
         return try result.get()
     }
 }
+{% endif %}
 
 """,
 
         "repositoryTests.stencil": """
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}RepositoryTests {
+    @Test func fetchReturnsDataSourceTitle() async throws {
+        let dataSource = {{ name }}RemoteDataSource()
+        let sut = {{ name }}RepositoryImpl(remoteDataSource: dataSource)
+
+        let value = try await sut.fetch{{ name }}()
+
+        #expect(value.title == "{{ name }}")
+    }
+}
+{% else %}
 import XCTest
 @testable import {{ moduleName }}
 
@@ -425,6 +848,7 @@ final class {{ name }}RepositoryTests: XCTestCase {
         XCTAssertEqual(value.title, "{{ name }}")
     }
 }
+{% endif %}
 
 """,
     ]
