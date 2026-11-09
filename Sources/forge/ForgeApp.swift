@@ -22,17 +22,27 @@ struct Forge {
         }
 
         do {
+            // Scaffold project configuration standard
+            if args.first == "init" {
+                try Command.runInit(arguments: args)
+                return
+            }
+
             // Parse arguments into a structured command (prompts interactively if flags are missing)
             let command = try Command.parse(arguments: args)
             // Execute feature generation and file creation
             try command.run()
         } catch let error as ForgeError {
-            // User intentionally cancelled an interactive prompt (Ctrl+C or 'q')
-            if case .cancelled = error {
+            switch error {
+            case .cancelled:
+                // User intentionally cancelled an interactive prompt (Ctrl+C or 'q')
                 fputs("\(error.message)\n", stderr)
-            } else {
-                // Command syntax or file conflict errors: print actionable error message and usage guide
-                fputs("Error: \(error.message)\n\n\(Command.usage)\n", stderr)
+            case .invalidArguments(let message):
+                // Command syntax or argument errors: print actionable error message and usage guide
+                fputs("Error: \(message)\n\n\(Command.usage)\n", stderr)
+            case .invalidFeatureName, .fileAlreadyExists:
+                // Validation or file conflict errors: print clear error without dumping full usage
+                fputs("Error: \(error.message)\n", stderr)
             }
             Foundation.exit(1)
         } catch {

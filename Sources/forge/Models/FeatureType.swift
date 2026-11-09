@@ -8,7 +8,6 @@ enum PresentationArchitecture: String, CaseIterable, CustomStringConvertible {
     case viper
     case vip
     case mvp
-    case tca
 
     /// Uppercased display name (e.g. `"MVVM"`, `"VIPER"`).
     var description: String {
@@ -35,7 +34,7 @@ enum PresentationArchitecture: String, CaseIterable, CustomStringConvertible {
     }
 }
 
-/// Template specs shared by every Clean Architecture variant (MVVM, MVI, VIPER, VIP, MVP, TCA).
+/// Template specs shared by every Clean Architecture variant (MVVM, MVI, VIPER, VIP, MVP).
 /// These produce the Entity, UseCase, Repository, RepositoryImpl, RemoteDataSource, and Response model.
 private let cleanDomainDataSpecs: [TemplateSpec] = [
     TemplateSpec(file: .entity,           templateName: "entity"),
@@ -55,14 +54,12 @@ enum FeatureType: String, CaseIterable {
     case cleanVIPER = "clean-viper"
     case cleanVIP   = "clean-vip"
     case cleanMVP   = "clean-mvp"
-    case cleanTCA   = "clean-tca"
     case cleanMVI   = "clean-mvi"
     case mvvm
     case mvi
     case viper
     case vip
     case mvp
-    case tca
 
     /// Comma-separated string of all valid feature type identifiers.
     static var validOptions: String {
@@ -84,8 +81,6 @@ enum FeatureType: String, CaseIterable {
         case (.vip, false):    return .vip
         case (.mvp, true):     return .cleanMVP
         case (.mvp, false):    return .mvp
-        case (.tca, true):     return .cleanTCA
-        case (.tca, false):    return .tca
         }
     }
 
@@ -96,22 +91,20 @@ enum FeatureType: String, CaseIterable {
         case .cleanVIPER: return "Clean Architecture + VIPER"
         case .cleanVIP:   return "Clean Architecture + VIP"
         case .cleanMVP:   return "Clean Architecture + MVP"
-        case .cleanTCA:   return "Clean Architecture + TCA"
         case .cleanMVI:   return "Clean Architecture + MVI"
         case .mvvm:       return "MVVM"
         case .mvi:        return "MVI"
         case .viper:      return "VIPER"
         case .vip:        return "VIP"
         case .mvp:        return "MVP"
-        case .tca:        return "TCA"
         }
     }
 
     /// Whether this type includes Clean Architecture Domain and Data layers.
     var hasCleanLayers: Bool {
         switch self {
-        case .cleanMVVM, .cleanVIPER, .cleanVIP, .cleanMVP, .cleanTCA, .cleanMVI: return true
-        case .mvvm, .mvi, .viper, .vip, .mvp, .tca:                               return false
+        case .cleanMVVM, .cleanVIPER, .cleanVIP, .cleanMVP, .cleanMVI: return true
+        case .mvvm, .mvi, .viper, .vip, .mvp:                         return false
         }
     }
 
@@ -152,10 +145,6 @@ enum FeatureType: String, CaseIterable {
 
         func intentSpec(_ name: String) -> TemplateSpec {
             TemplateSpec(file: .intent, templateName: name)
-        }
-
-        func featureSpec(_ name: String) -> TemplateSpec {
-            TemplateSpec(file: .feature, templateName: name)
         }
 
         switch self {
@@ -219,19 +208,6 @@ enum FeatureType: String, CaseIterable {
                 viewSpec(view),
                 presenterSpec(pres),
                 TemplateSpec(file: .model,               templateName: "mvpModel"),
-            ] + cleanDomainDataSpecs
-
-        case .cleanTCA:
-            let feat: String
-            let view: String
-            switch category {
-            case .form:  feat = "tcaFormFeature";        view = "tcaFormView"
-            case .list:  feat = "tcaListFeature";        view = "tcaListView"
-            case nil:    feat = "tcaFeature";            view = "tcaView"
-            }
-            return [
-                featureSpec(feat),
-                viewSpec(view),
             ] + cleanDomainDataSpecs
 
         case .cleanMVI:
@@ -335,19 +311,6 @@ enum FeatureType: String, CaseIterable {
                 presenterSpec(pres),
                 TemplateSpec(file: .model,               templateName: "mvpModel"),
             ]
-
-        case .tca:
-            let feat: String
-            let view: String
-            switch category {
-            case .form:  feat = "tcaFormFeature";        view = "tcaFormView"
-            case .list:  feat = "tcaListFeature";        view = "tcaListView"
-            case nil:    feat = "tcaFeature";            view = "tcaView"
-            }
-            return [
-                featureSpec(feat),
-                viewSpec(view),
-            ]
         }
     }
 
@@ -377,10 +340,6 @@ enum FeatureType: String, CaseIterable {
         case .cleanMVP, .mvp:
             presentationTests = [
                 TemplateSpec(file: .presenterTests, templateName: "presenterTests"),
-            ]
-        case .cleanTCA, .tca:
-            presentationTests = [
-                TemplateSpec(file: .featureTests, templateName: "featureTests"),
             ]
         }
 

@@ -7,7 +7,6 @@ import Foundation
 /// `Domain/` for Clean variants but in `Presentation/` for plain VIPER).
 enum FeatureFile: String, CaseIterable, Hashable {
     case dependencyContainer
-    case feature
     case view
     case viewModel
     case store
@@ -32,7 +31,6 @@ enum FeatureFile: String, CaseIterable, Hashable {
     case reducerTests
     case presenterTests
     case interactorTests
-    case featureTests
     case useCaseTests
     case repositoryTests
 
@@ -47,8 +45,6 @@ enum FeatureFile: String, CaseIterable, Hashable {
         switch self {
         case .dependencyContainer:
             return "Root"
-        case .feature:
-            return "Presentation"
         case .view, .viewModel, .store, .state, .intent, .reducer:
             return "Presentation"
         case .presenter, .interactor, .router, .contracts, .worker, .presentationModels, .model:
@@ -64,7 +60,7 @@ enum FeatureFile: String, CaseIterable, Hashable {
             }
             return "Data"
         case .viewModelTests, .storeTests, .reducerTests, .presenterTests,
-                .interactorTests, .featureTests, .useCaseTests, .repositoryTests:
+                .interactorTests, .useCaseTests, .repositoryTests:
             return "Tests"
         }
     }
@@ -95,7 +91,7 @@ enum FeatureFile: String, CaseIterable, Hashable {
     var isTest: Bool {
         switch self {
         case .viewModelTests, .storeTests, .reducerTests, .presenterTests,
-                .interactorTests, .featureTests, .useCaseTests, .repositoryTests:
+                .interactorTests, .useCaseTests, .repositoryTests:
             return true
         default:
             return false
