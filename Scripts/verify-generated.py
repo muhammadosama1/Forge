@@ -146,7 +146,7 @@ def main():
                             "swift", "test", "--package-path", str(Path(directory) / "Sample"),
                             "--jobs", str(args.jobs),
                         ], ROOT, log, args.timeout)
-                        match = re.search(r"✔ Test run with (\d+) tests in (\d+) suites passed", test_output)
+                        match = re.search(r"✔ Test run with (\d+) tests? in (\d+) suites? passed", test_output)
                         if not match or int(match.group(1)) == 0:
                             raise RuntimeError("no generated swift-testing tests passed")
                         executed_count = int(match.group(1))

@@ -90,7 +90,11 @@ struct Command {
 
     /// Current release version of the forge tool.
     /// Tracked in Sources/forge/Version.swift and stamped by git tags via Makefile.
+    #if FORGE_STAMPED_VERSION
     static let version = forgeVersion
+    #else
+    static let version = "dev"
+    #endif
 
     /// Returns `true` when the argument is a help flag (`-h`, `--help`, or the literal `help`).
     static func isHelpFlag(_ argument: String) -> Bool {
@@ -309,6 +313,9 @@ struct Command {
         // Resolve options: CLI flags override .forge.yml
         let shouldCreatePackage = cliCreatePackage ?? config.paths.package
         let packageTarget = cliPackageTarget ?? config.paths.target
+        if let packageTarget {
+            try PackageTargetName.validate(packageTarget)
+        }
         var shouldSkipDomain = cliSkipDomain ?? config.flags.noDomain
         let shouldGenerateTests = cliGenerateTests ?? config.flags.tests
         var useCleanLayers = cliCleanFlag ?? config.flags.clean

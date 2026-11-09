@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+## [2.0.0] - 2026-11-09
+
 ### Added
+- **Release readiness gate**: `make release-check VERSION=<version>` runs unit tests, release-binary user workflows, installation, and two 45-case generated-code matrices for default and advanced configurations before tagging.
+- **Existing Swift Package integration**: `--target` now verifies a declared target, adds a matching test target when needed, and registers Factory in the existing package and target. Unsupported dynamic manifests and custom target paths fail before generated files are written.
 - **Configurable Dependency Injection Strategy (`di: native | factory`)**: Choose between Forge's self-contained `native` static container or Michael Long's third-party [Factory](https://github.com/hmlongco/Factory) library (`di: factory`) in `.forge.yml`. When `factory` is selected, Forge generates `extension Container` property registrations, delegates `enum FeatureDependencyContainer` static factory methods to `Container.shared`, and automatically adds Factory package and target dependencies to generated `Package.swift` files. Defaults to `native` for backward compatibility.
 - **Configurable Test Framework (`testing: xctest | swift-testing`)**: Select between Apple's traditional `XCTest` or modern `Swift Testing` (`import Testing`, `@Suite`, `@Test`, `#expect`) in `.forge.yml`. Defaults to `xctest` for backward compatibility.
 - **Configurable State Binding Strategy (`binding: combine | concurrency`)**: Choose between traditional Apple Combine (`ObservableObject`, `@Published`, `@StateObject`) or modern Swift Concurrency & Observation (`@Observable`, `@State`, `@Bindable`, `import Observation`) in `.forge.yml`. Defaults to `combine` for backward compatibility.
@@ -12,6 +16,11 @@
 
 ### Removed
 - Removed support for The Composable Architecture (`-tca`).
+
+### Fixed
+- Reject invalid package target names before creating output and report malformed quoted YAML values with line numbers.
+- Allow a clean checkout to build without a generated `Version.swift`; release builds still stamp the selected version.
+- Count singular Swift Testing summaries correctly in the generated-code verification script.
 
 ## [1.1.1] - 2026-09-27
 

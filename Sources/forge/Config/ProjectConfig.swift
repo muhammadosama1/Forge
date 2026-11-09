@@ -192,6 +192,7 @@ struct ProjectConfig: Equatable {
                 guard let strVal = val as? String else {
                     throw ForgeError.invalidArguments("Expected string for 'paths.target' in .forge.yml.")
                 }
+                try PackageTargetName.validate(strVal)
                 target = strVal
             }
 

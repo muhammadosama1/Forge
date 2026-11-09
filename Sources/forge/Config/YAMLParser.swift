@@ -54,30 +54,40 @@ enum YAMLParser {
                 throw ParserError.invalidSyntax(line: lineNumber, message: "Tabs are not allowed for indentation in YAML")
             }
 
-            let strippedComment = stripTrailingComment(from: rawLine)
-            let trimmed = strippedComment.trimmingCharacters(in: .whitespaces)
-
-            // Skip empty lines or pure comment lines
-            if trimmed.isEmpty { continue }
-
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
             let indent = rawLine.prefix(while: { $0 == " " }).count
 
-            guard let colonIndex = findColonSeparator(in: trimmed) else {
-                throw ParserError.invalidSyntax(line: lineNumber, message: "Expected key-value pair with ':'")
+            let key: String
+            let valuePart: String
+            if trimmed.first == "\"" || trimmed.first == "'" {
+                let quoted = try parseQuoted(trimmed, line: lineNumber)
+                let remainder = quoted.remainder.trimmingCharacters(in: .whitespaces)
+                guard remainder.hasPrefix(":") else {
+                    throw ParserError.invalidSyntax(line: lineNumber, message: "Expected ':' after quoted key")
+                }
+                key = quoted.value
+                valuePart = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
+            } else {
+                guard let colon = trimmed.firstIndex(of: ":"),
+                      stripPlainComment(String(trimmed[..<colon])) == String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces) else {
+                    throw ParserError.invalidSyntax(line: lineNumber, message: "Expected key-value pair with ':'")
+                }
+                key = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces)
+                valuePart = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
             }
-
-            let key = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespaces)
             guard !key.isEmpty else {
                 throw ParserError.invalidSyntax(line: lineNumber, message: "Missing key before ':'")
             }
-
-            let valuePart = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
-            let rawValue: String? = valuePart.isEmpty ? nil : valuePart
+            // Comments inside quoted values belong to the value. Plain values have no quote state.
+            let value = valuePart.first == "\"" || valuePart.first == "'"
+                ? valuePart : stripPlainComment(valuePart)
+            let rawValue: String? = value.isEmpty ? nil : value
 
             tokenized.append(Line(
                 lineNumber: lineNumber,
                 indent: indent,
-                key: unquote(key),
+                key: key,
                 rawValue: rawValue
             ))
         }
@@ -120,7 +130,7 @@ enum YAMLParser {
 
             if let rawVal = line.rawValue {
                 // Scalar value on the same line
-                mapping[line.key] = parseScalar(rawVal)
+                mapping[line.key] = try parseScalar(rawVal, line: line.lineNumber)
             } else {
                 // Nested mapping: peek at next line to determine child indentation
                 if currentIndex < lines.count && lines[currentIndex].indent > line.indent {
@@ -143,88 +153,85 @@ enum YAMLParser {
 
     // MARK: - Scalar Parsing
 
-    private static func parseScalar(_ text: String) -> Any {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-
-        // Quoted strings
-        if (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"") && trimmed.count >= 2) ||
-           (trimmed.hasPrefix("'") && trimmed.hasSuffix("'") && trimmed.count >= 2) {
-            return String(trimmed.dropFirst().dropLast())
+    private static func parseScalar(_ text: String, line: Int) throws -> Any {
+        if text.first == "\"" || text.first == "'" {
+            let quoted = try parseQuoted(text, line: line)
+            let remainder = quoted.remainder
+            let trimmed = remainder.trimmingCharacters(in: .whitespaces)
+            guard trimmed.isEmpty || (remainder.first?.isWhitespace == true && trimmed.hasPrefix("#")) else {
+                throw ParserError.invalidSyntax(line: line, message: "Unexpected text after quoted string")
+            }
+            return quoted.value
         }
 
-        // Booleans
-        let lower = trimmed.lowercased()
-        if lower == "true" || lower == "yes" || lower == "on" {
-            return true
-        }
-        if lower == "false" || lower == "no" || lower == "off" {
-            return false
-        }
-
-        // Integers
-        if let intVal = Int(trimmed) {
-            return intVal
-        }
-
-        // Default to unquoted string
-        return trimmed
+        let lower = text.lowercased()
+        if ["true", "yes", "on"].contains(lower) { return true }
+        if ["false", "no", "off"].contains(lower) { return false }
+        if let value = Int(text) { return value }
+        return text
     }
 
-    private static func unquote(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        if (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"") && trimmed.count >= 2) ||
-           (trimmed.hasPrefix("'") && trimmed.hasSuffix("'") && trimmed.count >= 2) {
-            return String(trimmed.dropFirst().dropLast())
-        }
-        return trimmed
-    }
+    /// Parses a single-line YAML quoted scalar, leaving delimiters/comments for its caller.
+    private static func parseQuoted(_ text: String, line: Int) throws -> (value: String, remainder: String) {
+        let characters = Array(text)
+        let quote = characters[0]
+        var index = 1
+        var value = ""
+        let escapes: [Character: String] = [
+            "0": "\0", "a": "\u{7}", "b": "\u{8}", "t": "\t", "\t": "\t",
+            "n": "\n", "v": "\u{B}", "f": "\u{C}", "r": "\r", "e": "\u{1B}",
+            " ": " ", "\"": "\"", "/": "/", "\\": "\\",
+            "N": "\u{85}", "_": "\u{A0}", "L": "\u{2028}", "P": "\u{2029}"
+        ]
 
-    /// Strips comments (`# ...`) unless the hash is inside quotes.
-    /// In YAML, `#` starts a comment only if it is at the start of a line or preceded by whitespace.
-    private static func stripTrailingComment(from line: String) -> String {
-        var inSingleQuote = false
-        var inDoubleQuote = false
-
-        for (index, char) in line.enumerated() {
-            if char == "'" && !inDoubleQuote {
-                inSingleQuote.toggle()
-            } else if char == "\"" && !inSingleQuote {
-                inDoubleQuote.toggle()
-            } else if char == "#" && !inSingleQuote && !inDoubleQuote {
-                // Check that '#' is preceded by whitespace or is at the start of the line
-                let isPrecededByWhitespace: Bool
-                if index == 0 {
-                    isPrecededByWhitespace = true
+        while index < characters.count {
+            let character = characters[index]
+            index += 1
+            if character == quote {
+                if quote == "'", index < characters.count, characters[index] == "'" {
+                    value.append("'")
+                    index += 1
+                    continue
+                }
+                return (value, String(characters[index...]))
+            }
+            if quote == "\"", character == "\\" {
+                guard index < characters.count else { break }
+                let escape = characters[index]
+                index += 1
+                if let decoded = escapes[escape] {
+                    value += decoded
+                } else if let length = ["x": 2, "u": 4, "U": 8][String(escape)] {
+                    guard index + length <= characters.count else {
+                        throw ParserError.invalidSyntax(line: line, message: "Incomplete Unicode escape")
+                    }
+                    let digits = String(characters[index..<(index + length)])
+                    guard digits.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }),
+                          let number = UInt32(digits, radix: 16), let scalar = UnicodeScalar(number) else {
+                        throw ParserError.invalidSyntax(line: line, message: "Invalid Unicode escape")
+                    }
+                    value.unicodeScalars.append(scalar)
+                    index += length
                 } else {
-                    let prevIdx = line.index(line.startIndex, offsetBy: index - 1)
-                    isPrecededByWhitespace = line[prevIdx] == " " || line[prevIdx] == "\t"
+                    throw ParserError.invalidSyntax(line: line, message: "Unsupported escape '\(escape)'")
                 }
-
-                if isPrecededByWhitespace {
-                    let stringIdx = line.index(line.startIndex, offsetBy: index)
-                    return String(line[..<stringIdx])
-                }
+            } else {
+                value.append(character)
             }
         }
-
-        return line
+        throw ParserError.invalidSyntax(line: line, message: "Unterminated quoted string; multiline quoted strings are not supported")
     }
 
-    /// Finds the colon that separates the key from the value, ignoring colons inside quotes.
-    private static func findColonSeparator(in line: String) -> String.Index? {
-        var inSingleQuote = false
-        var inDoubleQuote = false
-
-        for (index, char) in line.enumerated() {
-            if char == "'" && !inDoubleQuote {
-                inSingleQuote.toggle()
-            } else if char == "\"" && !inSingleQuote {
-                inDoubleQuote.toggle()
-            } else if char == ":" && !inSingleQuote && !inDoubleQuote {
-                return line.index(line.startIndex, offsetBy: index)
+    /// Quotes embedded in a plain scalar (e.g. O'Brien) are literal characters.
+    private static func stripPlainComment(_ text: String) -> String {
+        var previous: Character?
+        for index in text.indices {
+            let character = text[index]
+            if character == "#", previous == nil || previous?.isWhitespace == true {
+                return String(text[..<index]).trimmingCharacters(in: .whitespaces)
             }
+            previous = character
         }
-
-        return nil
+        return text.trimmingCharacters(in: .whitespaces)
     }
 }

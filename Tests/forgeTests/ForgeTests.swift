@@ -968,6 +968,11 @@ final class ForgeTests: XCTestCase {
     func testTargetFlagWithExistingPackageStructure() throws {
         let sourcesDir = tempDirectory.appendingPathComponent("Sources").appendingPathComponent("FeatureKit")
         try FileManager.default.createDirectory(at: sourcesDir, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 6.2
+        import PackageDescription
+        let package = Package(name: "Sample", targets: [.target(name: "FeatureKit")])
+        """.write(to: tempDirectory.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
 
         let feature = try FeatureName(rawValue: "Profile")
         let generator = FeatureGenerator(
@@ -992,6 +997,8 @@ final class ForgeTests: XCTestCase {
         let testContent = try String(contentsOf: expectedTestPath, encoding: .utf8)
         XCTAssertTrue(testContent.contains("@testable import FeatureKit"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempDirectory.appendingPathComponent("FeatureKitTests").path))
+        let manifest = try String(contentsOf: tempDirectory.appendingPathComponent("Package.swift"), encoding: .utf8)
+        XCTAssertTrue(manifest.contains(".testTarget(name: \"FeatureKitTests\", dependencies: [\"FeatureKit\"])"))
     }
 
     func testPackageWithoutTestsDoesNotDeclareTestTarget() throws {
