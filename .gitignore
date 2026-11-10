@@ -3,6 +3,7 @@
 *.o
 *.d
 *.zip
+*.md
 /Packages
 xcuserdata/
 DerivedData/
