@@ -19,7 +19,7 @@ enum SwiftPackageIntegration {
     static func plan(at root: URL, target: String, tests: Bool, factory: Bool) throws -> Update {
         let url = root.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: url.path) else {
-            throw ForgeError.invalidArguments("No Package.swift found at '\(root.path)' for --target '\(target)'.")
+            throw ForgeError.invalidArguments("No Package.swift found at '\(root.path)' for --target '\(target)'. Set --path or paths.root to the package directory, or pass --package to create a standalone package.")
         }
         let source = try String(contentsOf: url, encoding: .utf8)
         guard let packageCall = source.range(of: #"\bPackage\s*\("#, options: .regularExpression),
@@ -30,6 +30,7 @@ enum SwiftPackageIntegration {
         }
 
         var foundTarget = false
+        var availableTargets: [String] = []
         var foundTestTarget = false
         var targetBody: Range<String.Index>?
         var testBody: Range<String.Index>?
@@ -43,6 +44,7 @@ enum SwiftPackageIntegration {
                 throw unsupported("literal target declarations")
             }
             let isTest = source[kind].hasPrefix(".testTarget")
+            if !isTest { availableTargets.append(name) }
             if name == target && !isTest {
                 foundTarget = true
                 targetBody = bodyRange
@@ -53,7 +55,9 @@ enum SwiftPackageIntegration {
             }
         }
         guard foundTarget, let targetBody else {
-            throw ForgeError.invalidArguments("Target '\(target)' is not declared in Package.swift.")
+            let available = availableTargets.sorted().map { "'\($0)'" }.joined(separator: ", ")
+            let hint = available.isEmpty ? "The manifest has no supported source targets." : "Choose a source target from: \(available)."
+            throw ForgeError.invalidArguments("No Swift package source target named '\(target)' in '\(url.path)'. \(hint)")
         }
         if argument("path", in: targetBody, source: source) != nil {
             throw unsupported("a target without a custom path for '\(target)'")

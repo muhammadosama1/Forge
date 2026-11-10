@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- Register generated Swift sources with an existing Xcode app target. Forge selects a sole app target automatically, accepts a target from `--xcode-target` or `.forge.yml`, and supports `--files-only` for manual wiring.
+
+### Fixed
+- Report actionable errors for missing or ambiguous targets, invalid configuration, missing architecture in scripts, and blocked output paths before writing feature files.
+
 ## [2.0.0] - 2026-11-09
 
 ### Added

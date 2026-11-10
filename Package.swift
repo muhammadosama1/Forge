@@ -14,15 +14,20 @@ let versionSettings: [SwiftSetting] = FileManager.default.fileExists(atPath: sta
 
 let package = Package(
     name: "forge",
+    platforms: [.macOS(.v11)],
     products: [
         .executable(
             name: "forge",
             targets: ["forge"]
         ),
     ],
+    dependencies: [
+        .package(url: "https://github.com/tuist/XcodeProj.git", exact: "9.16.1"),
+    ],
     targets: [
         .executableTarget(
             name: "forge",
+            dependencies: [.product(name: "XcodeProj", package: "XcodeProj")],
             swiftSettings: versionSettings
         ),
         .testTarget(

@@ -1,7 +1,24 @@
+import Foundation
 import XCTest
 @testable import forge
 
 final class InputValidationTests: XCTestCase {
+    func testBlockedOutputFolderFailsBeforeWritingSources() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let feature = root.appendingPathComponent("Login")
+        try FileManager.default.createDirectory(at: feature, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blocker = feature.appendingPathComponent("Presentation")
+        try "Keep this file".write(to: blocker, atomically: true, encoding: .utf8)
+
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--path", root.path])
+        XCTAssertThrowsError(try command.run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("'\(blocker.path)' is a file") == true)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: feature.path), ["Presentation"])
+        XCTAssertEqual(try String(contentsOf: blocker, encoding: .utf8), "Keep this file")
+    }
+
     func testInvalidTargetsAreRejectedFromCLIAndConfig() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
