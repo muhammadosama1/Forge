@@ -10,6 +10,10 @@ final class ForgeTests: XCTestCase {
         try super.setUpWithError()
         tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: tempDirectory.appendingPathComponent(".git"),
+            withIntermediateDirectories: true
+        )
     }
 
     override func tearDownWithError() throws {
