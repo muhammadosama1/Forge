@@ -238,6 +238,14 @@ final class ProjectConfigTests: XCTestCase {
 
     // MARK: - ConfigLoader Tests
 
+    func testConfigLoaderStopsAtFilesystemRoot() {
+        let root = URL(fileURLWithPath: "/", isDirectory: true)
+        let expected = ConfigLoader.configFilenames
+            .map { root.appendingPathComponent($0) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+        XCTAssertEqual(ConfigLoader.findConfigFile(startingFrom: root), expected)
+    }
+
     func testConfigLoaderDiscoversFileInDirectory() throws {
         let configFile = tempDirectory.appendingPathComponent(".forge.yml")
         try "architecture: mvp\n".write(to: configFile, atomically: true, encoding: .utf8)

@@ -56,12 +56,15 @@ enum ConfigLoader {
                 break
             }
 
-            let parent = current.deletingLastPathComponent()
-            if parent.path == current.path {
-                // Reached filesystem root
+            // Stop before deleting the root component. Foundation's URL parent
+            // behavior differs across macOS versions at the filesystem root.
+            let currentPath = current.path
+            if currentPath.isEmpty || currentPath == "/" {
                 break
             }
-            current = parent
+            let parentPath = (currentPath as NSString).deletingLastPathComponent
+            guard !parentPath.isEmpty, parentPath != currentPath else { break }
+            current = URL(fileURLWithPath: parentPath, isDirectory: true)
         }
 
         return nil
