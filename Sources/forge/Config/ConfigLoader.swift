@@ -24,7 +24,7 @@ enum ConfigLoader {
     ) throws -> LoadedConfig? {
         if let explicitPath {
             guard FileManager.default.fileExists(atPath: explicitPath.path) else {
-                throw ForgeError.invalidArguments("Configuration file not found at '\(explicitPath.path)'")
+                throw ForgeError.invalidArguments("Configuration file not found at '\(explicitPath.path)'. Check --config or run 'forge init' to create a project config.")
             }
             return try parseFile(at: explicitPath)
         }
@@ -73,6 +73,9 @@ enum ConfigLoader {
     /// Reads and parses a YAML config file into `LoadedConfig`.
     private static func parseFile(at url: URL) throws -> LoadedConfig {
         let content: String
+        guard (try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+            throw ForgeError.invalidArguments("Configuration path '\(url.path)' must point to a regular YAML file.")
+        }
         do {
             content = try String(contentsOf: url, encoding: .utf8)
         } catch {
@@ -84,9 +87,9 @@ enum ConfigLoader {
             let config = try ProjectConfig(from: dict)
             return LoadedConfig(config: config, fileURL: url)
         } catch let error as ForgeError {
-            throw error
+            throw ForgeError.invalidArguments("Invalid configuration at '\(url.path)': \(error.message)")
         } catch {
-            throw ForgeError.invalidArguments("Error parsing '\(url.lastPathComponent)': \(error.localizedDescription)")
+            throw ForgeError.invalidArguments("Error parsing configuration at '\(url.path)': \(error.localizedDescription)")
         }
     }
 }

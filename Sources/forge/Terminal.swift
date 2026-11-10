@@ -30,6 +30,8 @@ enum TerminalKey {
 
 /// Interactive terminal utilities: raw mode, keyboard input, selection prompts.
 enum Terminal {
+    static var isInteractive: Bool { isatty(STDIN_FILENO) == 1 }
+
     /// Temporarily switches stdin to raw (non-canonical) mode, executes `work`,
     /// then restores the original terminal settings.
     static func withRawMode<T>(_ work: () throws -> T) throws -> T {
@@ -67,7 +69,7 @@ enum Terminal {
     /// Supports arrow keys (esc + `[` + A/B), Enter, Space, Ctrl+C, and 'q'.
     static func readKey() throws -> TerminalKey {
         guard let byte = readByte() else {
-            return .unknown
+            throw ForgeError.cancelled
         }
 
         switch byte {
@@ -170,7 +172,7 @@ enum Terminal {
                 let hint = defaultIsYes ? "(Y/n)" : "(y/N)"
                 print("? \(title) \(hint)\n", terminator: "")
 
-                guard let byte = readByte() else { continue }
+                guard let byte = readByte() else { throw ForgeError.cancelled }
 
                 print("\u{001B}[2A", terminator: "")
                 fflush(stdout)

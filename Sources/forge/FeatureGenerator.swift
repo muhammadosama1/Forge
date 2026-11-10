@@ -10,6 +10,7 @@ struct GenerationResult {
     let createdSwiftPackage: URL?
     /// The `--target` value supplied by the user, if any.
     let detectedSwiftPackageTarget: String?
+    let registeredXcodeTarget: String?
 }
 
 /// Orchestrates rendering and writing of feature files to disk.
@@ -20,6 +21,8 @@ struct FeatureGenerator {
     let shouldCreatePackage: Bool
     /// Optional explicit Swift package target name.
     let packageTarget: String?
+    let xcodeTarget: String?
+    let filesOnly: Bool
     /// Whether to generate test files.
     let shouldGenerateTests: Bool
     /// When `true`, Domain layer files (Entity, UseCase, Repository protocol) are skipped.
@@ -39,6 +42,8 @@ struct FeatureGenerator {
         projectPath: URL,
         shouldCreatePackage: Bool,
         packageTarget: String?,
+        xcodeTarget: String? = nil,
+        filesOnly: Bool = false,
         shouldGenerateTests: Bool,
         shouldSkipDomain: Bool,
         type: FeatureType,
@@ -50,6 +55,8 @@ struct FeatureGenerator {
         self.projectPath = projectPath
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
+        self.xcodeTarget = xcodeTarget
+        self.filesOnly = filesOnly
         self.shouldGenerateTests = shouldGenerateTests
         self.shouldSkipDomain = shouldSkipDomain
         self.type = type
@@ -70,7 +77,20 @@ struct FeatureGenerator {
         }
 
         // Inspect target directory for an existing .xcodeproj for contextual file headers
-        let xcodeProject    = findXcodeProject(in: projectPath)
+        let xcodeProjects = findXcodeProjects(in: projectPath)
+        let packageOutput = shouldCreatePackage || packageTarget != nil
+        let integratesXcode = !filesOnly && (xcodeTarget != nil || (!packageOutput && !xcodeProjects.isEmpty))
+        if integratesXcode {
+            try Self.validateXcodeOptions(package: shouldCreatePackage || packageTarget != nil, tests: shouldGenerateTests, di: di)
+            guard !xcodeProjects.isEmpty else {
+                throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set --path or paths.root to the directory containing your Xcode project.")
+            }
+            guard xcodeProjects.count == 1 else {
+                let names = xcodeProjects.map(\.lastPathComponent).joined(separator: ", ")
+                throw ForgeError.invalidArguments("Multiple Xcode projects found in '\(projectPath.path)': \(names). Set --path or paths.root to a directory containing one .xcodeproj.")
+            }
+        }
+        let xcodeProject    = xcodeProjects.first
         let headerContext   = FileHeaderContext(projectPath: projectPath, xcodeProject: xcodeProject)
         let featureRoot     = projectPath.appendingPathComponent(feature.folderName, isDirectory: true)
         let targetName      = packageTarget ?? feature.typeName
@@ -189,9 +209,23 @@ struct FeatureGenerator {
             }
         }
 
-        // Pre-flight check: ensure no target files already exist before writing anything to disk
-        for file in files where FileManager.default.fileExists(atPath: file.url.path) {
-            throw ForgeError.fileAlreadyExists(file.url.path)
+        // Check both destination files and the folders they need before writing anything.
+        var checkedDirectories: Set<String> = []
+        for file in files {
+            if FileManager.default.fileExists(atPath: file.url.path) {
+                throw ForgeError.fileAlreadyExists(file.url.path)
+            }
+            var parent = (file.url.path as NSString).deletingLastPathComponent
+            while !parent.isEmpty, parent != "/", checkedDirectories.insert(parent).inserted {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: parent, isDirectory: &isDirectory) {
+                    guard isDirectory.boolValue else {
+                        throw ForgeError.invalidArguments("Cannot generate '\(file.url.lastPathComponent)' because '\(parent)' is a file. Move it or choose a different output path.")
+                    }
+                    break
+                }
+                parent = (parent as NSString).deletingLastPathComponent
+            }
         }
 
         let packageUpdate: SwiftPackageIntegration.Update?
@@ -203,10 +237,19 @@ struct FeatureGenerator {
             packageUpdate = nil
         }
 
+        let xcodeUpdate: XcodeProjectIntegration.Update?
+        if integratesXcode, let xcodeProject {
+            xcodeUpdate = try XcodeProjectIntegration.plan(project: xcodeProject, target: xcodeTarget, files: files.map(\.url))
+        } else {
+            xcodeUpdate = nil
+        }
+
         // Write all generated files atomically to disk, creating parent folders as needed
         var written: [URL] = []
+        var destination = projectPath
         do {
             for file in files {
+                destination = file.url
                 try FileManager.default.createDirectory(
                     at: file.url.deletingLastPathComponent(),
                     withIntermediateDirectories: true
@@ -215,32 +258,63 @@ struct FeatureGenerator {
                 written.append(file.url)
             }
             if let packageUpdate, packageUpdate.changed {
+                destination = packageUpdate.manifestURL
                 guard try String(contentsOf: packageUpdate.manifestURL, encoding: .utf8) == packageUpdate.original else {
                     throw ForgeError.invalidArguments("Package.swift changed during generation; no manifest update was made.")
                 }
                 try packageUpdate.updated.write(to: packageUpdate.manifestURL, atomically: true, encoding: .utf8)
             }
+            if let xcodeUpdate {
+                destination = xcodeUpdate.projectFile
+                try xcodeUpdate.apply()
+            }
         } catch {
-            for url in written { try? FileManager.default.removeItem(at: url) }
-            throw error
+            let leftovers = written.reversed().filter { url in
+                do {
+                    try FileManager.default.removeItem(at: url)
+                    return false
+                } catch {
+                    return FileManager.default.fileExists(atPath: url.path)
+                }
+            }
+            let message = (error as? ForgeError)?.message ?? "Could not write '\(destination.path)': \(error.localizedDescription)"
+            if !leftovers.isEmpty {
+                let paths = leftovers.map(\.path).joined(separator: ", ")
+                throw ForgeError.invalidArguments("\(message) Forge could not remove these generated files: \(paths). Review them before retrying.")
+            }
+            if let error = error as? ForgeError { throw error }
+            throw ForgeError.invalidArguments(message)
         }
 
         return GenerationResult(
-            createdFiles: files.map(\.url) + (packageUpdate?.changed == true ? [packageUpdate!.manifestURL] : []),
+            createdFiles: files.map(\.url) + (packageUpdate?.changed == true ? [packageUpdate!.manifestURL] : [])
+                + (xcodeUpdate.map { [$0.projectFile] } ?? []),
             detectedXcodeProject: xcodeProject,
             createdSwiftPackage: createdSwiftPackage,
-            detectedSwiftPackageTarget: packageTarget
+            detectedSwiftPackageTarget: packageTarget,
+            registeredXcodeTarget: xcodeUpdate?.targetName
         )
     }
 
     // MARK: - Helpers
 
-    /// Returns the first `.xcodeproj` found in `root`, or `nil`.
-    private func findXcodeProject(in root: URL) -> URL? {
+    static func validateXcodeOptions(package: Bool, tests: Bool, di: DependencyInjectionStrategy) throws {
+        if package {
+            throw ForgeError.invalidArguments("Xcode app target integration cannot be combined with Swift package output. Choose either --xcode-target or Swift package options (--package or --target). Check paths.package and paths.target if these came from .forge.yml.")
+        }
+        if tests {
+            throw ForgeError.invalidArguments("Forge cannot register tests with an Xcode test target yet. Pass --no-tests to register app sources only, or use --files-only to generate sources and tests for manual registration.")
+        }
+        if di != .native {
+            throw ForgeError.invalidArguments("Forge cannot wire Factory into an Xcode app target. Set di: native for automatic registration, or use --files-only and wire the generated files and Factory into Xcode manually.")
+        }
+    }
+
+    private func findXcodeProjects(in root: URL) -> [URL] {
         (try? FileManager.default.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: .skipsHiddenFiles
-        ))?.first { $0.pathExtension == "xcodeproj" }
+        ))?.filter { $0.pathExtension == "xcodeproj" }.sorted { $0.path < $1.path } ?? []
     }
 }

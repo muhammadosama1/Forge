@@ -164,7 +164,7 @@ struct ProjectConfig: Equatable {
                 throw ForgeError.invalidArguments("Expected mapping for 'paths' in .forge.yml.")
             }
 
-            let allowedPathsKeys: Set<String> = ["root", "package", "target"]
+            let allowedPathsKeys: Set<String> = ["root", "package", "target", "xcode_target"]
             for key in pathsDict.keys {
                 guard allowedPathsKeys.contains(key) else {
                     throw ForgeError.invalidArguments("Unknown path setting '\(key)' under 'paths' in .forge.yml.")
@@ -196,7 +196,16 @@ struct ProjectConfig: Equatable {
                 target = strVal
             }
 
-            self.paths = PathsConfig(root: root, package: package, target: target)
+            var xcodeTarget: String?
+            if let val = pathsDict["xcode_target"] {
+                guard let name = val as? String,
+                      !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ForgeError.invalidArguments("Expected a non-empty app target name for 'paths.xcode_target' in .forge.yml.")
+                }
+                xcodeTarget = name
+            }
+
+            self.paths = PathsConfig(root: root, package: package, target: target, xcodeTarget: xcodeTarget)
         } else {
             self.paths = PathsConfig()
         }
@@ -288,6 +297,7 @@ flags:
 #   root: Sources/Features  # Target directory relative to project root
 #   package: false          # Scaffold features as standalone Swift Packages
 #   target: FeatureKit      # Default target in existing multi-target packages
+#   xcode_target: "My App"   # Default Xcode app target; set root to the directory containing the .xcodeproj
 
 # Team naming conventions
 naming:
@@ -318,6 +328,8 @@ struct PathsConfig: Equatable {
     var package: Bool = false
     /// Default Swift package target name in existing multi-target packages.
     var target: String?
+    /// Default app target in an existing Xcode project.
+    var xcodeTarget: String?
 }
 
 /// Team naming conventions for types and folders.

@@ -9,14 +9,15 @@ struct Forge {
         // Strip executable path; keep only user-supplied CLI arguments
         let args = Array(CommandLine.arguments.dropFirst())
 
-        // Display help screen if no arguments provided or if help flag passed (-h, --help, help)
-        if args.isEmpty || args.contains(where: Command.isHelpFlag) {
+        // The bare word 'help' is a command only when supplied on its own.
+        if args.isEmpty || (args.count == 1 && Command.isHelpFlag(args[0])) ||
+            args.contains("-h") || args.contains("--help") {
             print(Command.help)
             return
         }
 
         // Print version string and exit if -v / --version was passed
-        if args.contains(where: Command.isVersionFlag) {
+        if args.count == 1 && Command.isVersionFlag(args[0]) {
             print("forge \(Command.version)")
             return
         }
@@ -38,8 +39,7 @@ struct Forge {
                 // User intentionally cancelled an interactive prompt (Ctrl+C or 'q')
                 fputs("\(error.message)\n", stderr)
             case .invalidArguments(let message):
-                // Command syntax or argument errors: print actionable error message and usage guide
-                fputs("Error: \(message)\n\n\(Command.usage)\n", stderr)
+                fputs("Error: \(message)\n", stderr)
             case .invalidFeatureName, .fileAlreadyExists:
                 // Validation or file conflict errors: print clear error without dumping full usage
                 fputs("Error: \(error.message)\n", stderr)

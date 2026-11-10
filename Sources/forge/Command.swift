@@ -10,6 +10,8 @@ struct Command {
     let shouldCreatePackage: Bool
     /// Explicit Swift package target name, if `--target` was used.
     let packageTarget: String?
+    let xcodeTarget: String?
+    let filesOnly: Bool
     /// Whether `--no-domain` was passed.
     let shouldSkipDomain: Bool
     /// Whether `--tests` was passed.
@@ -34,6 +36,8 @@ struct Command {
         projectPath: URL,
         shouldCreatePackage: Bool,
         packageTarget: String?,
+        xcodeTarget: String? = nil,
+        filesOnly: Bool = false,
         shouldSkipDomain: Bool,
         shouldGenerateTests: Bool,
         type: FeatureType,
@@ -48,6 +52,8 @@ struct Command {
         self.projectPath = projectPath
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
+        self.xcodeTarget = xcodeTarget
+        self.filesOnly = filesOnly
         self.shouldSkipDomain = shouldSkipDomain
         self.shouldGenerateTests = shouldGenerateTests
         self.type = type
@@ -61,7 +67,7 @@ struct Command {
 
     static let usage = """
     Usage:
-      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget>] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [-form | -list]
+      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget> | --xcode-target <AppTarget> | --files-only] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [-form | -list]
       forge init [--path <ProjectRoot>] [--force]
 
     Architecture flags (pick one):
@@ -130,6 +136,8 @@ struct Command {
       --config <path>       Path to .forge.yml configuration file
       --package             Generate a Package.swift manifest
       --target <name>       Swift package target name for multi-target packages
+      --xcode-target <name> Register generated sources with an existing Xcode app target
+      --files-only         Generate files without editing an Xcode project or package manifest
       -clean, --clean       Include Clean Architecture layers (Domain + Data)
       --no-clean            Omit Clean Architecture layers (overrides config)
       --no-domain           Skip Domain layer files (implies --clean)
@@ -158,7 +166,7 @@ struct Command {
       testing:       xctest, swift-testing
       di:            native, factory (Factory library)
       flags:         clean, no_domain, tests
-      paths:         root, package, target
+      paths:         root, package, target, xcode_target
       naming:        type_prefix, type_suffix, folder_prefix, folder_suffix
 
     CLEAN ARCHITECTURE:
@@ -229,7 +237,6 @@ struct Command {
         }
 
         let targetURL = path.appendingPathComponent(".forge.yml")
-
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         try ProjectConfig.starterTemplate.write(to: targetURL, atomically: true, encoding: .utf8)
         print("Created .forge.yml at \(targetURL.path)")
@@ -241,7 +248,7 @@ struct Command {
     static func parse(arguments: [String]) throws -> Command {
         // First argument must be the 'make' subcommand
         guard arguments.first == "make" else {
-            throw ForgeError.invalidArguments("Expected command: make")
+            throw ForgeError.invalidArguments("Unknown command '\(arguments.first ?? "")'. Run 'forge --help' for available commands.")
         }
 
         // Must specify at least the feature name following 'make'
@@ -254,6 +261,8 @@ struct Command {
         var explicitConfigPath: URL?
         var cliCreatePackage: Bool?
         var cliPackageTarget: String?
+        var cliXcodeTarget: String?
+        var filesOnly = false
         var cliSkipDomain: Bool?
         var cliGenerateTests: Bool?
         var cliCleanFlag: Bool?
@@ -271,6 +280,22 @@ struct Command {
             if try parseConfigFlag(argument, arguments: arguments, at: &index, configPath: &explicitConfigPath) { continue }
             if parsePackageFlag(argument, at: &index, shouldCreatePackage: &cliCreatePackage) { continue }
             if try parseTargetFlag(argument, arguments: arguments, at: &index, packageTarget: &cliPackageTarget) { continue }
+            if argument == "--files-only" {
+                filesOnly = true
+                index += 1
+                continue
+            }
+            if argument == "--xcode-target" {
+                let next = index + 1
+                guard cliXcodeTarget == nil, next < arguments.count,
+                      !arguments[next].hasPrefix("-"),
+                      !arguments[next].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ForgeError.invalidArguments("Provide one app target name with --xcode-target.")
+                }
+                cliXcodeTarget = arguments[next]
+                index += 2
+                continue
+            }
             if try parseCleanFlag(argument, at: &index, hasCleanFlag: &cliCleanFlag) { continue }
             if try parseNoCleanFlag(argument, at: &index, hasCleanFlag: &cliCleanFlag) { continue }
             if try parseNoDomainFlag(argument, at: &index, shouldSkipDomain: &cliSkipDomain) { continue }
@@ -311,13 +336,23 @@ struct Command {
         }
 
         // Resolve options: CLI flags override .forge.yml
-        let shouldCreatePackage = cliCreatePackage ?? config.paths.package
-        let packageTarget = cliPackageTarget ?? config.paths.target
+        let packageRequested = cliCreatePackage == true || cliPackageTarget != nil
+        if filesOnly && (packageRequested || cliXcodeTarget != nil) {
+            throw ForgeError.invalidArguments("--files-only cannot be combined with --package, --target, or --xcode-target.")
+        }
+        let shouldCreatePackage = !filesOnly && (cliCreatePackage ?? (cliXcodeTarget == nil && config.paths.package))
+        let packageTarget = cliPackageTarget ?? (!filesOnly && cliXcodeTarget == nil ? config.paths.target : nil)
+        let xcodeTarget = cliXcodeTarget ?? (filesOnly || packageRequested ? nil : config.paths.xcodeTarget)
         if let packageTarget {
             try PackageTargetName.validate(packageTarget)
         }
         var shouldSkipDomain = cliSkipDomain ?? config.flags.noDomain
         let shouldGenerateTests = cliGenerateTests ?? config.flags.tests
+        if xcodeTarget != nil {
+            try FeatureGenerator.validateXcodeOptions(
+                package: shouldCreatePackage || packageTarget != nil, tests: shouldGenerateTests, di: config.di
+            )
+        }
         var useCleanLayers = cliCleanFlag ?? config.flags.clean
 
         // If user explicitly asks to skip domain files, Clean Architecture layers (Data) are implied
@@ -335,6 +370,9 @@ struct Command {
         var presentation = selectedPresentation ?? config.architecture
 
         if presentation == nil && !useCleanLayers {
+            guard Terminal.isInteractive else {
+                throw ForgeError.invalidArguments("No architecture selected in a non-interactive session. Pass an architecture flag such as '-mvvm' or set 'architecture' in .forge.yml.")
+            }
             presentation = try Terminal.promptSelection(
                 title: "Which presentation pattern do you want to use?",
                 options: PresentationArchitecture.allCases
@@ -358,6 +396,8 @@ struct Command {
             projectPath: projectPath,
             shouldCreatePackage: shouldCreatePackage,
             packageTarget: packageTarget,
+            xcodeTarget: xcodeTarget,
+            filesOnly: filesOnly,
             shouldSkipDomain: shouldSkipDomain,
             shouldGenerateTests: shouldGenerateTests,
             type: type,
@@ -382,6 +422,8 @@ struct Command {
             projectPath: projectPath,
             shouldCreatePackage: shouldCreatePackage,
             packageTarget: packageTarget,
+            xcodeTarget: xcodeTarget,
+            filesOnly: filesOnly,
             shouldGenerateTests: shouldGenerateTests,
             shouldSkipDomain: shouldSkipDomain,
             type: type,
@@ -408,7 +450,11 @@ struct Command {
         } else {
             if let xcodeProject = result.detectedXcodeProject {
                 print("\nDetected Xcode project: \(xcodeProject.lastPathComponent)")
-                print("Xcode project registration is the next step for this CLI.")
+                if let xcodeTarget = result.registeredXcodeTarget {
+                    print("Registered sources with Xcode app target: \(xcodeTarget)")
+                } else if packageTarget == nil {
+                    print("Files were generated only.")
+                }
             }
             if let packageTarget = result.detectedSwiftPackageTarget {
                 print("\nTargeted Swift package target: \(packageTarget)")

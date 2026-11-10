@@ -154,8 +154,9 @@ let package = Package(
         print("PASS existing package integration and repeatability", flush=True)
 
         before = manifest.read_text()
-        require("not declared" in run([forge, "make", "Missing", "--target", "UnknownKit",
-                                       "--path", existing], succeeds=False),
+        unknown_target = run([forge, "make", "Missing", "--target", "UnknownKit",
+                              "--path", existing], succeeds=False)
+        require("'UnknownKit'" in unknown_target and "Choose a source target from: 'FeatureKit'" in unknown_target,
                 "Unknown target did not give an actionable error")
         require(not (existing / "Sources/UnknownKit/Missing").exists(),
                 "Unknown target left feature files behind")
