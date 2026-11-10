@@ -30,6 +30,13 @@ jobs:
       - name: Generate Version
         run: make generate-version
       - name: Test Forge
-        run: swift test --jobs 4
+        run: |
+          if swift test --jobs 4 > "$RUNNER_TEMP/forge-swift-test.log" 2>&1; then
+            grep -E "Test Suite 'All tests'|Executed [0-9]+ tests" "$RUNNER_TEMP/forge-swift-test.log" | tail -2
+          else
+            grep -nE 'error:|failed|Failure|Executed [0-9]+ tests' "$RUNNER_TEMP/forge-swift-test.log" | tail -40 || true
+            tail -100 "$RUNNER_TEMP/forge-swift-test.log"
+            exit 1
+          fi
       - name: Build generated packages and run their tests
         run: python3 Scripts/verify-generated.py --architecture "${{ matrix.architecture }}" --jobs 4
