@@ -209,6 +209,17 @@ struct FeatureGenerator {
             }
         }
 
+        let lockResource: URL
+        if integratesXcode, let xcodeProject {
+            lockResource = xcodeProject.appendingPathComponent("project.pbxproj")
+        } else if !shouldCreatePackage, packageTarget != nil {
+            lockResource = projectPath.appendingPathComponent("Package.swift")
+        } else {
+            lockResource = projectPath
+        }
+        let lock = try GenerationLock.acquire(for: lockResource)
+        defer { GenerationLock.release(lock) }
+
         // Check both destination files and the folders they need before writing anything.
         var checkedDirectories: Set<String> = []
         for file in files {
@@ -244,8 +255,10 @@ struct FeatureGenerator {
             xcodeUpdate = nil
         }
 
-        // Write all generated files atomically to disk, creating parent folders as needed
-        var written: [URL] = []
+        var written: [PublishedFile] = []
+        defer {
+            for file in written { file.removeStagingFile() }
+        }
         var destination = projectPath
         do {
             for file in files {
@@ -254,8 +267,7 @@ struct FeatureGenerator {
                     at: file.url.deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                try file.content.write(to: file.url, atomically: true, encoding: .utf8)
-                written.append(file.url)
+                written.append(try PublishedFile.write(file.content, to: file.url))
             }
             if let packageUpdate, packageUpdate.changed {
                 destination = packageUpdate.manifestURL
@@ -269,18 +281,11 @@ struct FeatureGenerator {
                 try xcodeUpdate.apply()
             }
         } catch {
-            let leftovers = written.reversed().filter { url in
-                do {
-                    try FileManager.default.removeItem(at: url)
-                    return false
-                } catch {
-                    return FileManager.default.fileExists(atPath: url.path)
-                }
-            }
+            let leftovers = written.reversed().filter { !$0.rollBack() }
             let message = (error as? ForgeError)?.message ?? "Could not write '\(destination.path)': \(error.localizedDescription)"
             if !leftovers.isEmpty {
-                let paths = leftovers.map(\.path).joined(separator: ", ")
-                throw ForgeError.invalidArguments("\(message) Forge could not remove these generated files: \(paths). Review them before retrying.")
+                let paths = leftovers.map(\.url.path).joined(separator: ", ")
+                throw ForgeError.invalidArguments("\(message) These output paths remain after rollback: \(paths). Review them before retrying.")
             }
             if let error = error as? ForgeError { throw error }
             throw ForgeError.invalidArguments(message)
@@ -312,9 +317,14 @@ struct FeatureGenerator {
 
     private func findXcodeProjects(in root: URL) -> [URL] {
         (try? FileManager.default.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            at: root.resolvingSymlinksInPath(),
+            includingPropertiesForKeys: nil,
             options: .skipsHiddenFiles
-        ))?.filter { $0.pathExtension == "xcodeproj" }.sorted { $0.path < $1.path } ?? []
+        ))?.filter { candidate in
+            guard candidate.pathExtension == "xcodeproj" else { return false }
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }.sorted { $0.path < $1.path } ?? []
     }
 }

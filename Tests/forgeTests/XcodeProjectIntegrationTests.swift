@@ -23,15 +23,8 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         let configuredCommand = try Command.parse(arguments: ["make", "Login", "-mvvm", "--path", root.path])
         try configuredCommand.run()
         let project = try Data(contentsOf: projectFile)
-        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: project, format: nil) as? [String: Any])
-        let objects = try XCTUnwrap(plist["objects"] as? [String: [String: Any]])
-        let files = try XCTUnwrap(objects["A00000000000000000000005"]?["files"] as? [String])
-        XCTAssertEqual(files.count, 3)
-        XCTAssertEqual(objects["A00000000000000000000006"]?["files"] as? [String], [])
-        let paths = try files.map { id in
-            let ref = try XCTUnwrap(objects[id]?["fileRef"] as? String)
-            return try XCTUnwrap(objects[ref]?["path"] as? String)
-        }
+        let paths = try registeredPaths()
+        XCTAssertEqual(paths.count, 3)
         XCTAssertEqual(Set(paths), [
             "Login/LoginDependencyContainer.swift",
             "Login/Presentation/LoginView.swift",
@@ -42,6 +35,184 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         }
         XCTAssertThrowsError(try configuredCommand.run())
         XCTAssertEqual(try Data(contentsOf: projectFile), project)
+    }
+
+    func testConcurrentDistinctFeaturesKeepEverySourceAndMembership() throws {
+        // Exercise two spellings of the same project root.
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+        let names = (1...16).map { "Feature\($0)" }
+        let results = try runConcurrently(names.enumerated().map { index, name in
+            cliArguments(name, at: index.isMultiple(of: 2) ? root : alias)
+        })
+        for result in results { XCTAssertEqual(result.status, 0, result.error) }
+        let paths = try registeredPaths()
+        XCTAssertEqual(paths.count, 3 * names.count)
+        XCTAssertEqual(Set(paths), Set(names.flatMap(expectedPaths)))
+        for path in paths {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path))
+        }
+    }
+
+    func testConcurrentDuplicateFeaturesKeepTheWinningRunIntact() throws {
+        let results = try runConcurrently(Array(repeating: cliArguments("Login", at: root), count: 16))
+        XCTAssertEqual(results.filter { $0.status == 0 }.count, 1)
+        for result in results where result.status != 0 {
+            XCTAssertTrue(result.error.contains("Refusing to overwrite existing file"), result.error)
+        }
+        let paths = try registeredPaths()
+        XCTAssertEqual(paths.sorted(), expectedPaths("Login").sorted())
+        for path in paths {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path))
+        }
+    }
+
+    func testConcurrentFilesOnlyCommandsKeepTheWinningRunIntact() throws {
+        let args = ["make", "Login", "-mvvm", "--path", root.path, "--files-only"]
+        let original = try Data(contentsOf: projectFile)
+        let results = try runConcurrently(Array(repeating: args, count: 8))
+        XCTAssertEqual(results.filter { $0.status == 0 }.count, 1)
+        for path in expectedPaths("Login") {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path))
+        }
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testConcurrentSwiftPackageUpdatesKeepBothTestTargets() throws {
+        let manifest = root.appendingPathComponent("Package.swift")
+        try """
+        import PackageDescription
+        let package = Package(name: "Demo", targets: [
+            .target(name: "First"),
+            .target(name: "Second"),
+        ])
+        """.write(to: manifest, atomically: true, encoding: .utf8)
+        let results = try runConcurrently(["First", "Second"].map {
+            ["make", "Login", "-mvvm", "--path", root.path, "--target", $0, "--tests"]
+        })
+        for result in results { XCTAssertEqual(result.status, 0, result.error) }
+        let updated = try String(contentsOf: manifest, encoding: .utf8)
+        for target in ["First", "Second"] {
+            XCTAssertTrue(updated.contains(".testTarget(name: \"\(target)Tests\""))
+            let path = root.appendingPathComponent("Tests/\(target)Tests/Login/LoginViewModelTests.swift")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+        }
+    }
+
+    func testRegularFileWithProjectExtensionIsIgnored() throws {
+        try "notes".write(to: root.appendingPathComponent("Notes.xcodeproj"), atomically: true, encoding: .utf8)
+        try command(target: "Demo App").run()
+        XCTAssertEqual(try registeredPaths().sorted(), expectedPaths("Login").sorted())
+    }
+
+    func testSymlinkedProjectDirectoryIsDiscovered() throws {
+        let actual = root.appendingPathComponent("ProjectBundle")
+        try FileManager.default.moveItem(at: projectFile.deletingLastPathComponent(), to: actual)
+        try FileManager.default.createSymbolicLink(at: projectFile.deletingLastPathComponent(), withDestinationURL: actual)
+        try command(target: "Demo App").run()
+        XCTAssertEqual(try registeredPaths().sorted(), expectedPaths("Login").sorted())
+    }
+
+    func testMalformedProjectDirectoryFailsBeforePublishingSources() throws {
+        try "invalid project".write(to: projectFile, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try command(target: "Demo App").run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("could not parse") == true)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login").path))
+    }
+
+    func testPublicationConflictRollsBackEarlierSourcesAndPreservesDanglingSymlink() throws {
+        let original = try Data(contentsOf: projectFile)
+        let path = root.appendingPathComponent("Login/Presentation/LoginViewModel.swift")
+        try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: path.path, withDestinationPath: "missing.swift")
+        XCTAssertThrowsError(try command(target: "Demo App").run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("Refusing to overwrite existing file") == true)
+        }
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: path.path), "missing.swift")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login/LoginDependencyContainer.swift").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login/Presentation/LoginView.swift").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testFailedProjectWriteRollsBackPublishedSources() throws {
+        let original = try Data(contentsOf: projectFile)
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: projectFile.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: projectFile.path) }
+        XCTAssertThrowsError(try command(target: "Demo App").run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("Could not write") == true)
+        }
+        let feature = root.appendingPathComponent("Login")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: feature.path))
+        let files = try XCTUnwrap(FileManager.default.enumerator(atPath: feature.path)).allObjects as? [String]
+        XCTAssertEqual(files, ["Presentation"])
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testRollbackPreservesReplacementAtPublishedPath() throws {
+        let path = root.appendingPathComponent("Source.swift")
+        let published = try PublishedFile.write("original", to: path)
+        defer { published.removeStagingFile() }
+        try FileManager.default.removeItem(at: path)
+        try "replacement".write(to: path, atomically: true, encoding: .utf8)
+        XCTAssertFalse(published.rollBack())
+        XCTAssertEqual(try String(contentsOf: path, encoding: .utf8), "replacement")
+    }
+
+    private func registeredPaths() throws -> [String] {
+        let data = try Data(contentsOf: projectFile)
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        let objects = try XCTUnwrap(plist["objects"] as? [String: [String: Any]])
+        let files = try XCTUnwrap(objects["A00000000000000000000005"]?["files"] as? [String])
+        XCTAssertEqual(objects["A00000000000000000000006"]?["files"] as? [String], [])
+        return try files.map { id in
+            let ref = try XCTUnwrap(objects[id]?["fileRef"] as? String)
+            return try XCTUnwrap(objects[ref]?["path"] as? String)
+        }
+    }
+
+    private func expectedPaths(_ name: String) -> [String] {
+        [
+            "\(name)/\(name)DependencyContainer.swift",
+            "\(name)/Presentation/\(name)View.swift",
+            "\(name)/Presentation/\(name)ViewModel.swift",
+        ]
+    }
+
+    private func cliArguments(_ name: String, at root: URL) -> [String] {
+        ["make", name, "-mvvm", "--path", root.path, "--xcode-target", "Demo App"]
+    }
+
+    private func runConcurrently(_ arguments: [[String]]) throws -> [(status: Int32, error: String)] {
+        let binary = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("forge")
+        let completed = DispatchGroup()
+        var jobs: [(Process, Pipe)] = []
+        defer {
+            for (process, _) in jobs where process.isRunning { process.terminate() }
+        }
+        for args in arguments {
+            let process = Process()
+            let stderr = Pipe()
+            process.executableURL = binary
+            process.arguments = args
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = stderr
+            completed.enter()
+            process.terminationHandler = { _ in completed.leave() }
+            do {
+                try process.run()
+            } catch {
+                completed.leave()
+                throw error
+            }
+            jobs.append((process, stderr))
+        }
+        guard completed.wait(timeout: .now() + 15) == .success else {
+            throw ForgeError.invalidArguments("Concurrent Forge commands timed out")
+        }
+        return jobs.map { process, stderr in
+            (process.terminationStatus, String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        }
     }
 
     func testExplicitOutputOptionsOverrideConfiguredXcodeTarget() throws {

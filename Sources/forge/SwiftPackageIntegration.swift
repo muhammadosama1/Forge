@@ -17,7 +17,7 @@ enum SwiftPackageIntegration {
     }
 
     static func plan(at root: URL, target: String, tests: Bool, factory: Bool) throws -> Update {
-        let url = root.appendingPathComponent("Package.swift")
+        let url = root.appendingPathComponent("Package.swift").resolvingSymlinksInPath()
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ForgeError.invalidArguments("No Package.swift found at '\(root.path)' for --target '\(target)'. Set --path or paths.root to the package directory, or pass --package to create a standalone package.")
         }
