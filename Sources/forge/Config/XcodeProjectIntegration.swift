@@ -18,7 +18,7 @@ enum XcodeProjectIntegration {
     }
 
     static func plan(project: URL, target name: String?, files: [URL]) throws -> Update {
-        let projectFile = project.appendingPathComponent("project.pbxproj")
+        let projectFile = project.appendingPathComponent("project.pbxproj").resolvingSymlinksInPath()
         let original: Data
         do {
             original = try Data(contentsOf: projectFile)
@@ -97,19 +97,5 @@ enum XcodeProjectIntegration {
             throw ForgeError.invalidArguments("Could not serialize the updated Xcode project.")
         }
         return Update(targetName: target.name, projectFile: projectFile, original: original, updated: updated)
-    }
-
-    // Generated paths do not exist yet. Resolve symlinks from the nearest existing parent.
-    private static func resolvedPath(_ url: URL) -> String {
-        var ancestor = url.standardizedFileURL
-        var missing: [String] = []
-        while !FileManager.default.fileExists(atPath: ancestor.path),
-              !ancestor.path.isEmpty, ancestor.path != "/" {
-            missing.append(ancestor.lastPathComponent)
-            ancestor.deleteLastPathComponent()
-        }
-        return missing.reversed().reduce(ancestor.resolvingSymlinksInPath()) { url, component in
-            url.appendingPathComponent(component)
-        }.path
     }
 }
