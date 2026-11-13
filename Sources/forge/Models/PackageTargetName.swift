@@ -3,7 +3,7 @@ import Foundation
 /// Validates explicit target names before they become paths or Swift source.
 enum PackageTargetName {
     // These tokens cannot be used unescaped in the generated import declaration.
-    private static let reservedNames: Set<String> = [
+    static let reservedNames: Set<String> = [
         "_", "associatedtype", "class", "deinit", "enum", "extension", "fileprivate", "func",
         "import", "init", "inout", "internal", "let", "open", "operator", "private", "precedencegroup",
         "protocol", "public", "rethrows", "static", "struct", "subscript", "typealias", "var",

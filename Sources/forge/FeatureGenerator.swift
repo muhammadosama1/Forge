@@ -11,6 +11,7 @@ struct GenerationResult {
     /// The `--target` value supplied by the user, if any.
     let detectedSwiftPackageTarget: String?
     let registeredXcodeTarget: String?
+    let registeredXcodeTestTarget: String?
 }
 
 /// Orchestrates rendering and writing of feature files to disk.
@@ -22,6 +23,7 @@ struct FeatureGenerator {
     /// Optional explicit Swift package target name.
     let packageTarget: String?
     let xcodeTarget: String?
+    let xcodeTestTarget: String?
     let filesOnly: Bool
     /// Whether to generate test files.
     let shouldGenerateTests: Bool
@@ -43,6 +45,7 @@ struct FeatureGenerator {
         shouldCreatePackage: Bool,
         packageTarget: String?,
         xcodeTarget: String? = nil,
+        xcodeTestTarget: String? = nil,
         filesOnly: Bool = false,
         shouldGenerateTests: Bool,
         shouldSkipDomain: Bool,
@@ -56,6 +59,7 @@ struct FeatureGenerator {
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
         self.xcodeTarget = xcodeTarget
+        self.xcodeTestTarget = xcodeTestTarget
         self.filesOnly = filesOnly
         self.shouldGenerateTests = shouldGenerateTests
         self.shouldSkipDomain = shouldSkipDomain
@@ -71,7 +75,11 @@ struct FeatureGenerator {
     /// - Parameter feature: Validated feature name.
     /// - Parameter selection: Controls which file roles to include.
     /// - Returns: A result with paths, detected Xcode project, and package info.
-    func generate(feature: FeatureName, selection: FeatureFileSelection) throws -> GenerationResult {
+    func generate(
+        feature: FeatureName,
+        selection: FeatureFileSelection,
+        readXcodeBuildSettings: XcodeProjectIntegration.BuildSettingsReader = XcodeProjectIntegration.readBuildSettings
+    ) throws -> GenerationResult {
         if let packageTarget {
             try PackageTargetName.validate(packageTarget)
         }
@@ -79,9 +87,9 @@ struct FeatureGenerator {
         // Inspect target directory for an existing .xcodeproj for contextual file headers
         let xcodeProjects = findXcodeProjects(in: projectPath)
         let packageOutput = shouldCreatePackage || packageTarget != nil
-        let integratesXcode = !filesOnly && (xcodeTarget != nil || (!packageOutput && !xcodeProjects.isEmpty))
+        let integratesXcode = !filesOnly && (xcodeTarget != nil || xcodeTestTarget != nil || (!packageOutput && !xcodeProjects.isEmpty))
         if integratesXcode {
-            try Self.validateXcodeOptions(package: shouldCreatePackage || packageTarget != nil, tests: shouldGenerateTests, di: di)
+            try Self.validateXcodeOptions(package: packageOutput, di: di)
             guard !xcodeProjects.isEmpty else {
                 throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set --path or paths.root to the directory containing your Xcode project.")
             }
@@ -194,20 +202,9 @@ struct FeatureGenerator {
             createdSwiftPackage = featureRoot
         }
 
-        // Optionally generate unit test files if --tests was specified
-        if shouldGenerateTests {
-            for spec in type.testTemplateSpecs where !shouldSkipDomain || !spec.file.isDomainTest {
-                let header = try Templates.fileHeader(
-                    fileName: spec.file.fileName(for: feature.typeName),
-                    context: headerContext
-                )
-                let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
-                files.append(GeneratedFile(
-                    url: testsRoot.appendingPathComponent(spec.file.fileName(for: feature.typeName)),
-                    content: header + body
-                ))
-            }
-        }
+        let testSpecs = shouldGenerateTests
+            ? type.testTemplateSpecs.filter { !shouldSkipDomain || !$0.file.isDomainTest } : []
+        let testURLs = testSpecs.map { testsRoot.appendingPathComponent($0.file.fileName(for: feature.typeName)) }
 
         let lockResource: URL
         if integratesXcode, let xcodeProject {
@@ -222,16 +219,16 @@ struct FeatureGenerator {
 
         // Check both destination files and the folders they need before writing anything.
         var checkedDirectories: Set<String> = []
-        for file in files {
-            if FileManager.default.fileExists(atPath: file.url.path) {
-                throw ForgeError.fileAlreadyExists(file.url.path)
+        for url in files.map(\.url) + testURLs {
+            if FileManager.default.fileExists(atPath: url.path) {
+                throw ForgeError.fileAlreadyExists(url.path)
             }
-            var parent = (file.url.path as NSString).deletingLastPathComponent
+            var parent = (url.path as NSString).deletingLastPathComponent
             while !parent.isEmpty, parent != "/", checkedDirectories.insert(parent).inserted {
                 var isDirectory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: parent, isDirectory: &isDirectory) {
                     guard isDirectory.boolValue else {
-                        throw ForgeError.invalidArguments("Cannot generate '\(file.url.lastPathComponent)' because '\(parent)' is a file. Move it or choose a different output path.")
+                        throw ForgeError.invalidArguments("Cannot generate '\(url.lastPathComponent)' because '\(parent)' is a file. Move it or choose a different output path.")
                     }
                     break
                 }
@@ -250,9 +247,21 @@ struct FeatureGenerator {
 
         let xcodeUpdate: XcodeProjectIntegration.Update?
         if integratesXcode, let xcodeProject {
-            xcodeUpdate = try XcodeProjectIntegration.plan(project: xcodeProject, target: xcodeTarget, files: files.map(\.url))
+            xcodeUpdate = try XcodeProjectIntegration.plan(
+                project: xcodeProject, target: xcodeTarget, files: files.map(\.url),
+                testTarget: xcodeTestTarget, testFiles: testURLs, readBuildSettings: readXcodeBuildSettings
+            )
         } else {
             xcodeUpdate = nil
+        }
+
+        if let moduleName = xcodeUpdate?.testModuleName {
+            sharedContext["moduleName"] = moduleName
+        }
+        for (spec, url) in zip(testSpecs, testURLs) {
+            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext)
+            let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
+            files.append(GeneratedFile(url: url, content: header + body))
         }
 
         var written: [PublishedFile] = []
@@ -297,18 +306,16 @@ struct FeatureGenerator {
             detectedXcodeProject: xcodeProject,
             createdSwiftPackage: createdSwiftPackage,
             detectedSwiftPackageTarget: packageTarget,
-            registeredXcodeTarget: xcodeUpdate?.targetName
+            registeredXcodeTarget: xcodeUpdate?.targetName,
+            registeredXcodeTestTarget: xcodeUpdate?.testTargetName
         )
     }
 
     // MARK: - Helpers
 
-    static func validateXcodeOptions(package: Bool, tests: Bool, di: DependencyInjectionStrategy) throws {
+    static func validateXcodeOptions(package: Bool, di: DependencyInjectionStrategy) throws {
         if package {
             throw ForgeError.invalidArguments("Xcode app target integration cannot be combined with Swift package output. Choose either --xcode-target or Swift package options (--package or --target). Check paths.package and paths.target if these came from .forge.yml.")
-        }
-        if tests {
-            throw ForgeError.invalidArguments("Forge cannot register tests with an Xcode test target yet. Pass --no-tests to register app sources only, or use --files-only to generate sources and tests for manual registration.")
         }
         if di != .native {
             throw ForgeError.invalidArguments("Forge cannot wire Factory into an Xcode app target. Set di: native for automatic registration, or use --files-only and wire the generated files and Factory into Xcode manually.")
