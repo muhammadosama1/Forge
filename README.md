@@ -75,7 +75,7 @@ Customize generated Views and State handlers with functional UI logic instead of
 * **`--target <name>`**: Target names must start with an ASCII letter or underscore and contain only ASCII letters, digits, underscores, or hyphens; Swift reserved names are rejected. The same rules apply to `paths.target`. For an existing Swift package, Forge verifies the target in `Package.swift`, routes files into `Sources/<Target>/<Feature>`, adds a test target when `--tests` is used, and adds Factory package and target dependencies when `di: factory` is selected. Manifest updates require literal target and dependency arrays and the standard `Sources/<Target>` layout; unsupported manifests fail before feature files are written.
 * **`--xcode-target <name>`**: Register generated Swift sources in an Xcode app target. With one `.xcodeproj` and one app target, Forge selects it automatically. For projects with multiple app targets, select one with `--xcode-target "My App"` or `paths.xcode_target`. Point `--path` at the directory containing the `.xcodeproj`.
 * **`--xcode-test-target <name>`**: With tests enabled, select an existing app-hosted Xcode unit-test target. Forge automatically selects a unique match when possible. Automatic test registration requires full Xcode and an app build configuration with testability enabled.
-* **`--files-only`**: Generate files for manual wiring, including projects using synchronized folders or Factory. For automatic registration of app sources only, use `--no-tests` and native DI.
+* **`--files-only`**: Generate files in the project root for manual wiring, including projects with unusual Xcode layouts or Factory. For automatic integration of app sources only, use `--no-tests` and native DI.
 * **`--tests`**: Automatically generates matching unit test suites (`XCTestCase`, UseCase mocks).
 * **`--no-tests`**: Skips test generation (overrides `.forge.yml`).
 
@@ -178,7 +178,7 @@ swift test --package-path Profile
 
 Generated tests import `FeatureKit`, while feature types retain the `Profile` prefix. For an existing package, `--target` writes tests under `Tests/<Target>Tests/<Feature>` and adds a matching test target to a supported manifest when needed.
 
-For Xcode apps, Forge adds the generated tests under `<Feature>/Tests` to an existing app-hosted unit-test target and uses the app's resolved Swift module in `@testable import`. Run the tests using a scheme that already includes that unit-test target.
+For Xcode apps, Forge integrates generated tests with an existing app-hosted unit-test target and uses the app's resolved Swift module in `@testable import`. Run the tests using a scheme that already includes that unit-test target.
 
 ```sh
 forge make Profile -mvvm --tests
@@ -187,7 +187,9 @@ forge make Settings -mvvm --tests --xcode-target "My App" --xcode-test-target "M
 
 Set `paths.xcode_test_target` for a shared default. The CLI flag overrides it. Use `--files-only --tests` for manual registration and set the generated test import to the app's module name.
 
-To smoke-test Xcode integration, build Forge with `swift build` and pass an available iOS Simulator ID from `xcrun simctl list devices available`:
+For a target with one dedicated Xcode synchronized folder, Forge generates into `<SynchronizedFolder>/<Feature>` and Xcode handles membership automatically. For example, with separate `MyApp` and `MyAppTests` synchronized folders, the files go under `MyApp/Profile` and `MyAppTests/Profile`. A target using explicit file references keeps the standard layout of `<Feature>` for app sources or `<Feature>/Tests` for tests. Forge reports overlapping folders, ambiguous membership, or exceptions affecting generated files before writing output.
+
+The Xcode smoke test runs XCTest and Swift Testing for both layouts. Build Forge with `swift build` and pass an available iOS Simulator ID from `xcrun simctl list devices available`:
 
 ```sh
 python3 Scripts/xcode-smoke.py --forge .build/debug/forge \

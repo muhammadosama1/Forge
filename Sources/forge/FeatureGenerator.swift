@@ -102,6 +102,25 @@ struct FeatureGenerator {
         let headerContext   = FileHeaderContext(projectPath: projectPath, xcodeProject: xcodeProject)
         let featureRoot     = projectPath.appendingPathComponent(feature.folderName, isDirectory: true)
         let targetName      = packageTarget ?? feature.typeName
+        let testSpecs = shouldGenerateTests
+            ? type.testTemplateSpecs.filter { !shouldSkipDomain || !$0.file.isDomainTest } : []
+
+        let integratedProject = integratesXcode ? xcodeProject : nil
+        let lockResource: URL
+        if let integratedProject {
+            lockResource = integratedProject.appendingPathComponent("project.pbxproj")
+        } else if !shouldCreatePackage, packageTarget != nil {
+            lockResource = projectPath.appendingPathComponent("Package.swift")
+        } else {
+            lockResource = projectPath
+        }
+        let lock = try GenerationLock.acquire(for: lockResource)
+        defer { GenerationLock.release(lock) }
+
+        let xcodeIntegration = try integratedProject.map {
+            try XcodeProjectIntegration(project: $0, target: xcodeTarget, testTarget: xcodeTestTarget,
+                                        generatesTests: !testSpecs.isEmpty)
+        }
         let sourcesRoot: URL
         let testsRoot: URL
 
@@ -123,6 +142,8 @@ struct FeatureGenerator {
             let testsDir = projectPath.appendingPathComponent("Tests", isDirectory: true)
             let targetTestsDir = testsDir.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
             testsRoot = targetTestsDir.appendingPathComponent(feature.folderName, isDirectory: true)
+        } else if let xcodeIntegration {
+            (sourcesRoot, testsRoot) = try xcodeIntegration.outputDirectories(featureRoot: featureRoot)
         } else {
             // Standard Xcode directory: places code under Feature/ and tests under Feature/Tests
             sourcesRoot = featureRoot
@@ -202,20 +223,7 @@ struct FeatureGenerator {
             createdSwiftPackage = featureRoot
         }
 
-        let testSpecs = shouldGenerateTests
-            ? type.testTemplateSpecs.filter { !shouldSkipDomain || !$0.file.isDomainTest } : []
         let testURLs = testSpecs.map { testsRoot.appendingPathComponent($0.file.fileName(for: feature.typeName)) }
-
-        let lockResource: URL
-        if integratesXcode, let xcodeProject {
-            lockResource = xcodeProject.appendingPathComponent("project.pbxproj")
-        } else if !shouldCreatePackage, packageTarget != nil {
-            lockResource = projectPath.appendingPathComponent("Package.swift")
-        } else {
-            lockResource = projectPath
-        }
-        let lock = try GenerationLock.acquire(for: lockResource)
-        defer { GenerationLock.release(lock) }
 
         // Check both destination files and the folders they need before writing anything.
         var checkedDirectories: Set<String> = []
@@ -245,15 +253,9 @@ struct FeatureGenerator {
             packageUpdate = nil
         }
 
-        let xcodeUpdate: XcodeProjectIntegration.Update?
-        if integratesXcode, let xcodeProject {
-            xcodeUpdate = try XcodeProjectIntegration.plan(
-                project: xcodeProject, target: xcodeTarget, files: files.map(\.url),
-                testTarget: xcodeTestTarget, testFiles: testURLs, readBuildSettings: readXcodeBuildSettings
-            )
-        } else {
-            xcodeUpdate = nil
-        }
+        let xcodeUpdate = try xcodeIntegration?.plan(
+            files: files.map(\.url), testFiles: testURLs, readBuildSettings: readXcodeBuildSettings
+        )
 
         if let moduleName = xcodeUpdate?.testModuleName {
             sharedContext["moduleName"] = moduleName
@@ -302,7 +304,7 @@ struct FeatureGenerator {
 
         return GenerationResult(
             createdFiles: files.map(\.url) + (packageUpdate?.changed == true ? [packageUpdate!.manifestURL] : [])
-                + (xcodeUpdate.map { [$0.projectFile] } ?? []),
+                + (xcodeUpdate.flatMap { $0.changed ? [$0.projectFile] : nil } ?? []),
             detectedXcodeProject: xcodeProject,
             createdSwiftPackage: createdSwiftPackage,
             detectedSwiftPackageTarget: packageTarget,
