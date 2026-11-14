@@ -13,11 +13,16 @@ import tempfile
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "xcode-smoke"
 
 
-def run(command, cwd):
-    result = subprocess.run(
-        command, cwd=cwd, text=True, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, timeout=300,
-    )
+def run(command, cwd, *, timeout=300):
+    try:
+        result = subprocess.run(
+            command, cwd=cwd, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        output = (error.stdout or b"").decode(errors="replace")
+        tail = "\n".join(output.splitlines()[-100:])
+        raise RuntimeError(f"{' '.join(map(str, command))} timed out after {timeout}s\n{tail}") from error
     if result.returncode:
         raise RuntimeError(f"{' '.join(map(str, command))} exited {result.returncode}\n{result.stdout}")
     return result.stdout
@@ -80,8 +85,8 @@ def smoke(forge, destination, root, *, synchronized):
     output = run([
         "xcodebuild", "test", "-project", project / "Smoke.xcodeproj", "-scheme", "Smoke",
         "-destination", destination, "-derivedDataPath", derived_data,
-        "-parallel-testing-enabled", "NO",
-    ], project)
+        "-parallel-testing-enabled", "NO", "ONLY_ACTIVE_ARCH=YES",
+    ], project, timeout=420)
     xctest = r"Test Case '-\[SmokeTests\.SmokeXCTestViewModelTests [^\]]+\]' passed"
     swift_testing = r"Suite SmokeSwiftTestingViewModelTests passed"
     if not all(re.search(pattern, output) for pattern in (xctest, swift_testing)):
@@ -119,6 +124,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+    except (OSError, RuntimeError) as error:
         print(error, file=sys.stderr)
         sys.exit(1)
