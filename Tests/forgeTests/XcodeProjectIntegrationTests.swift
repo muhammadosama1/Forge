@@ -161,6 +161,104 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: projectFile), original)
     }
 
+    func testGeneratesIntoSeparateSynchronizedFoldersWithoutRewritingProject() throws {
+        let project = synchronizedProject()
+        try project.write(to: projectFile, atomically: true, encoding: .utf8)
+        let original = try Data(contentsOf: projectFile)
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        try command.run(readXcodeBuildSettings: buildSettings)
+
+        for path in expectedPaths("Login") {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("App/\(path)").path))
+        }
+        let tests = root.appendingPathComponent("AppTests/Login/LoginViewModelTests.swift")
+        XCTAssertTrue(try String(contentsOf: tests, encoding: .utf8).contains("@testable import CustomAppModule"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("App/Login/Tests").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+        XCTAssertThrowsError(try command.run(readXcodeBuildSettings: buildSettings)) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("Refusing to overwrite") == true)
+        }
+    }
+
+    func testUsesExplicitMembershipForTargetWithoutSynchronizedFolder() throws {
+        try synchronizedProject(testGroup: nil).write(to: projectFile, atomically: true, encoding: .utf8)
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        try command.run(readXcodeBuildSettings: buildSettings)
+
+        XCTAssertTrue(try registeredPaths().isEmpty)
+        XCTAssertEqual(try registeredPaths(phase: "A00000000000000000000009"), ["Login/Tests/LoginViewModelTests.swift"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("App/Login/Presentation/LoginView.swift").path))
+    }
+
+    func testRejectsAmbiguousOrExcludedSynchronizedOutputBeforeWriting() throws {
+        let appGroup = "A0000000000000000000000C"
+        let testGroup = "A0000000000000000000000D"
+        let exception = "A0000000000000000000000E"
+        let excludedProject = synchronizedProject()
+            .replacingOccurrences(of: "path = AppTests;", with: "path = AppTests; exceptions = (\(exception));")
+            .replacingOccurrences(of: "objects = {", with: """
+                objects = {
+                    \(exception) = {
+                        isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+                        target = A00000000000000000000004;
+                        membershipExceptions = (Login);
+                    };
+                """)
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        for (project, message) in [
+            (synchronizedProject(testGroup: appGroup), "does not belong exclusively"),
+            (synchronizedProject(testFolder: "App/AppTests"), "does not belong exclusively"),
+            (synchronizedProject(appGroup: "\(appGroup), \(testGroup)"), "Multiple Xcode synchronized folders"),
+            (excludedProject, "exception or file type override"),
+        ] {
+            try project.write(to: projectFile, atomically: true, encoding: .utf8)
+            let original = try Data(contentsOf: projectFile)
+            XCTAssertThrowsError(try command.run { _, _, _, _ in
+                XCTFail("Folder validation should precede xcodebuild")
+                return [:]
+            }) { error in
+                XCTAssertTrue((error as? ForgeError)?.message.contains(message) == true, "\(error)")
+            }
+            for path in ["App", "AppTests", "Login"] {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path))
+            }
+            XCTAssertEqual(try Data(contentsOf: projectFile), original)
+        }
+    }
+
+    func testSynchronizedGenerationRollsBackWhenProjectChanges() throws {
+        try synchronizedProject().write(to: projectFile, atomically: true, encoding: .utf8)
+        let changedProject = synchronizedProject() + "\n"
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        XCTAssertThrowsError(try command.run { project, target, configuration, sdk in
+            try changedProject.write(to: self.projectFile, atomically: true, encoding: .utf8)
+            return try self.buildSettings(project, target, configuration, sdk)
+        }) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("project.pbxproj changed") == true)
+        }
+        for path in expectedPaths("Login").map({ "App/\($0)" }) + ["AppTests/Login/LoginViewModelTests.swift"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path))
+        }
+        XCTAssertEqual(try String(contentsOf: projectFile, encoding: .utf8), changedProject)
+    }
+
+    func testRejectsSymlinkOutOfSynchronizedFolder() throws {
+        try synchronizedProject().write(to: projectFile, atomically: true, encoding: .utf8)
+        let original = try Data(contentsOf: projectFile)
+        let appFolder = root.appendingPathComponent("App", isDirectory: true)
+        let redirected = root.appendingPathComponent("Redirected", isDirectory: true)
+        for directory in [appFolder, redirected] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try FileManager.default.createSymbolicLink(at: appFolder.appendingPathComponent("Login"), withDestinationURL: redirected)
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--path", root.path])
+        XCTAssertThrowsError(try command.run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("crosses a symlink") == true, "\(error)")
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: redirected.path), [])
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
     func testBuildSettingsDecoderSelectsRequestedTargetAndRejectsMalformedOutput() throws {
         let output = Data(#"[{"target":"Dependency","buildSettings":{}},{"target":"Demo App","buildSettings":{"PRODUCT_MODULE_NAME":"AppModule"}}]"#.utf8)
         XCTAssertEqual(try XcodeProjectIntegration.decodeBuildSettings(output, target: "Demo App"), ["PRODUCT_MODULE_NAME": "AppModule"])
@@ -433,6 +531,24 @@ final class XcodeProjectIntegrationTests: XCTestCase {
 
     private func installUnitTestTarget(associated: Bool = true) throws {
         try unitTestProject(associated: associated).write(to: projectFile, atomically: true, encoding: .utf8)
+    }
+
+    private func synchronizedProject(
+        appGroup: String = "A0000000000000000000000C",
+        testGroup: String? = "A0000000000000000000000D",
+        testFolder: String = "AppTests"
+    ) -> String {
+        let project = unitTestProject()
+            .replacingOccurrences(of: "children = ();", with: "children = (A0000000000000000000000C, A0000000000000000000000D);")
+            .replacingOccurrences(of: "objects = {", with: """
+                objects = {
+                    A0000000000000000000000C = {isa = PBXFileSystemSynchronizedRootGroup; path = App; sourceTree = "<group>";};
+                    A0000000000000000000000D = {isa = PBXFileSystemSynchronizedRootGroup; path = \(testFolder); sourceTree = "<group>";};
+                """)
+            .replacingOccurrences(of: "name = \"Demo App\";", with: "name = \"Demo App\"; fileSystemSynchronizedGroups = (\(appGroup));")
+        guard let testGroup else { return project }
+        return project.replacingOccurrences(of: "name = \"App Tests\";",
+                                            with: "name = \"App Tests\"; fileSystemSynchronizedGroups = (\(testGroup));")
     }
 
     private func unitTestProject(associated: Bool = true, addSecondTestTarget: Bool = false) -> String {

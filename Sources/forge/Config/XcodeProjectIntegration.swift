@@ -2,7 +2,7 @@ import Foundation
 import XcodeProj
 
 /// Plans source membership changes before Forge writes any feature files.
-enum XcodeProjectIntegration {
+struct XcodeProjectIntegration {
     typealias BuildSettingsReader = (URL, String, String, String?) throws -> [String: String]
 
     struct Update {
@@ -11,24 +11,38 @@ enum XcodeProjectIntegration {
         let testModuleName: String?
         let projectFile: URL
         let original: Data
-        let updated: Data
+        let updated: Data?
+        var changed: Bool { updated != nil }
 
         func apply() throws {
             guard try Data(contentsOf: projectFile) == original else {
                 throw ForgeError.invalidArguments("project.pbxproj changed during generation. Retry with the current project.")
             }
-            try updated.write(to: projectFile, options: .atomic)
+            try updated?.write(to: projectFile, options: .atomic)
         }
     }
 
-    static func plan(
-        project: URL,
-        target name: String?,
-        files: [URL],
-        testTarget testName: String? = nil,
-        testFiles: [URL] = [],
-        readBuildSettings: BuildSettingsReader = readBuildSettings
-    ) throws -> Update {
+    private struct SynchronizedFolder {
+        let group: PBXFileSystemSynchronizedRootGroup
+        let logicalPath: String
+        let path: String
+        let targets: [PBXTarget]
+    }
+
+    private let project: URL
+    private let projectFile: URL
+    private let original: Data
+    private let graph: PBXProj
+    private let root: PBXProject
+    private let mainGroup: PBXGroup
+    private let app: PBXNativeTarget
+    private let tests: PBXNativeTarget?
+    private let sourceRoot: String
+    private let sourcePrefix: String
+    private let projectPrefix: String
+    private let synchronizedFolders: [SynchronizedFolder]
+
+    init(project: URL, target name: String?, testTarget testName: String?, generatesTests: Bool) throws {
         let projectFile = project.appendingPathComponent("project.pbxproj").resolvingSymlinksInPath()
         let original: Data
         do {
@@ -60,35 +74,78 @@ enum XcodeProjectIntegration {
             }
             throw ForgeError.invalidArguments("Multiple app targets found in '\(project.lastPathComponent)': \(available). Choose one with --xcode-target or set paths.xcode_target in .forge.yml.")
         }
-        guard let sources = try target.sourcesBuildPhase() else {
-            throw ForgeError.invalidArguments("Xcode app target '\(target.name)' has no Sources build phase. Add a Compile Sources phase in Xcode or select a different target.")
-        }
-
-        let testTarget = try testFiles.isEmpty ? nil : selectTestTarget(in: root, app: target, name: testName)
-        let testSources = try testTarget?.sourcesBuildPhase()
-        if let testTarget, testSources == nil || testSources === sources {
-            throw ForgeError.invalidArguments("Xcode unit-test target '\(testTarget.name)' needs its own Sources build phase.")
-        }
-
-        let sourceRoot = resolvedPath(project.deletingLastPathComponent())
-        var memberships = files.map { (file: $0, phase: sources) }
-        if let testSources {
-            memberships += testFiles.map { (file: $0, phase: testSources) }
-        }
-        let paths = memberships.map { resolvedPath($0.file) }
-        let prefix = sourceRoot == "/" ? "/" : sourceRoot + "/"
-        guard paths.allSatisfy({ $0.hasPrefix(prefix) }) else {
-            throw ForgeError.invalidArguments("Xcode target output must stay inside the project directory.")
-        }
-        for group in graph.fileSystemSynchronizedRootGroups {
-            guard let folder = try group.fullPath(sourceRoot: sourceRoot) else {
+        let tests = try generatesTests ? Self.selectTestTarget(in: root, app: target, name: testName) : nil
+        let projectDirectory = project.deletingLastPathComponent().standardizedFileURL
+        let sourceRoot = resolvedPath(projectDirectory)
+        let projectPrefix = Self.directoryPrefix(projectDirectory.path)
+        let sourcePrefix = Self.directoryPrefix(sourceRoot)
+        let synchronizedFolders = try graph.fileSystemSynchronizedRootGroups.map { group in
+            guard let folder = try? group.fullPath(sourceRoot: sourceRoot) else {
                 throw ForgeError.invalidArguments("Forge could not resolve an Xcode synchronized folder.")
             }
-            let folderPath = resolvedPath(URL(fileURLWithPath: folder))
-            let folderPrefix = folderPath == "/" ? "/" : folderPath + "/"
-            if paths.contains(where: { $0.hasPrefix(folderPrefix) }) {
-                throw ForgeError.invalidArguments("Feature output overlaps the Xcode synchronized folder '\(folderPath)'. Generate outside that folder or use --files-only if Xcode already manages membership there.")
+            let targets = root.targets.filter { target in
+                target.fileSystemSynchronizedGroups?.contains { $0 === group } == true
             }
+            let url = URL(fileURLWithPath: folder).standardizedFileURL
+            let logicalPath = Self.projectRelativeSpelling(url.path, projectPrefix: projectPrefix, sourcePrefix: sourcePrefix)
+            return SynchronizedFolder(group: group, logicalPath: logicalPath, path: resolvedPath(url), targets: targets)
+        }
+        self.project = project
+        self.projectFile = projectFile
+        self.original = original
+        self.graph = graph
+        self.root = root
+        self.mainGroup = mainGroup
+        self.app = target
+        self.tests = tests
+        self.sourceRoot = sourceRoot
+        self.sourcePrefix = sourcePrefix
+        self.projectPrefix = projectPrefix
+        self.synchronizedFolders = synchronizedFolders
+    }
+
+    private static func directoryPrefix(_ path: String) -> String {
+        path.hasSuffix("/") ? path : path + "/"
+    }
+
+    // Normalize aliases of the project directory while preserving symlinks inside it for validation.
+    private static func projectRelativeSpelling(_ path: String, projectPrefix: String, sourcePrefix: String) -> String {
+        guard path.hasPrefix(projectPrefix) else { return path }
+        return sourcePrefix + path.dropFirst(projectPrefix.count)
+    }
+
+    func outputDirectories(featureRoot: URL) throws -> (sources: URL, tests: URL) {
+        let feature = featureRoot.lastPathComponent
+        let sources = try synchronizedDirectory(for: app, feature: feature) ?? featureRoot
+        let testDirectory = try tests.flatMap { try synchronizedDirectory(for: $0, feature: feature) }
+        return (sources, testDirectory ?? featureRoot.appendingPathComponent("Tests", isDirectory: true))
+    }
+
+    private func synchronizedDirectory(for target: PBXTarget, feature: String) throws -> URL? {
+        let folders = synchronizedFolders.filter { folder in folder.targets.contains { $0 === target } }
+        guard folders.count <= 1 else {
+            let paths = folders.map(\.path).sorted().joined(separator: ", ")
+            throw ForgeError.invalidArguments("Multiple Xcode synchronized folders for target '\(target.name)': \(paths). Use --files-only and choose the destinations manually.")
+        }
+        return folders.first.map { URL(fileURLWithPath: $0.logicalPath, isDirectory: true).appendingPathComponent(feature, isDirectory: true) }
+    }
+
+    func plan(files: [URL], testFiles: [URL], readBuildSettings: BuildSettingsReader) throws -> Update {
+        guard let sources = try app.sourcesBuildPhase() else {
+            throw ForgeError.invalidArguments("Xcode app target '\(app.name)' has no Sources build phase. Add a Compile Sources phase in Xcode or select a different target.")
+        }
+        let testSources = try tests?.sourcesBuildPhase()
+        if let tests, testSources == nil || testSources === sources {
+            throw ForgeError.invalidArguments("Xcode unit-test target '\(tests.name)' needs its own Sources build phase.")
+        }
+        var memberships = files.map { (file: $0, target: app, phase: sources) }
+        if let tests, let testSources {
+            memberships += testFiles.map { (file: $0, target: tests, phase: testSources) }
+        }
+
+        let paths = memberships.map { resolvedPath($0.file) }
+        guard paths.allSatisfy({ $0.hasPrefix(sourcePrefix) }) else {
+            throw ForgeError.invalidArguments("Xcode target output must stay inside the project directory.")
         }
 
         let names = Set(memberships.map { $0.file.lastPathComponent })
@@ -97,15 +154,20 @@ enum XcodeProjectIntegration {
                   let fullPath = try reference.fullPath(sourceRoot: sourceRoot) else { return nil }
             return resolvedPath(URL(fileURLWithPath: fullPath))
         })
+        var changed = false
         for (path, membership) in zip(paths, memberships) {
             guard existingPaths.insert(path).inserted else {
                 throw ForgeError.invalidArguments("The Xcode project already references '\(path)'.")
             }
+            if try usesSynchronizedMembership(membership.file, resolved: path, target: membership.target) {
+                continue
+            }
+            changed = true
             let reference = PBXFileReference(
                 sourceTree: .sourceRoot,
                 name: (path as NSString).lastPathComponent,
                 lastKnownFileType: "sourcecode.swift",
-                path: String(path.dropFirst(prefix.count))
+                path: String(path.dropFirst(sourcePrefix.count))
             )
             let buildFile = PBXBuildFile(file: reference)
             graph.add(object: reference)
@@ -114,14 +176,63 @@ enum XcodeProjectIntegration {
             membership.phase.files = (membership.phase.files ?? []) + [buildFile]
         }
 
-        let moduleName = try testTarget.map {
-            try testModuleName(in: project, root: root, app: target, tests: $0, readBuildSettings: readBuildSettings)
+        let moduleName = try tests.map {
+            try Self.testModuleName(in: project, root: root, app: app, tests: $0, readBuildSettings: readBuildSettings)
         }
-        guard let updated = try graph.dataRepresentation() else {
-            throw ForgeError.invalidArguments("Could not serialize the updated Xcode project.")
+        var updated: Data?
+        if changed {
+            guard let data = try graph.dataRepresentation() else {
+                throw ForgeError.invalidArguments("Could not serialize the updated Xcode project.")
+            }
+            updated = data
         }
-        return Update(targetName: target.name, testTargetName: testTarget?.name, testModuleName: moduleName,
+        return Update(targetName: app.name, testTargetName: tests?.name, testModuleName: moduleName,
                       projectFile: projectFile, original: original, updated: updated)
+    }
+
+    private func usesSynchronizedMembership(_ file: URL, resolved path: String, target: PBXTarget) throws -> Bool {
+        // A symlink in an output subdirectory can send a generated file into or out of a synchronized folder.
+        let logicalPath = Self.projectRelativeSpelling(
+            file.standardizedFileURL.path, projectPrefix: projectPrefix, sourcePrefix: sourcePrefix
+        )
+        let folders = synchronizedFolders.filter {
+            path.hasPrefix(Self.directoryPrefix($0.path)) || logicalPath.hasPrefix(Self.directoryPrefix($0.logicalPath))
+        }
+        guard let folder = folders.first else { return false }
+        guard folders.count == 1,
+              folder.targets.count == 1, folder.targets.first === target else {
+            throw ForgeError.invalidArguments("The Xcode synchronized folder membership for '\(path)' does not belong exclusively to '\(target.name)'. Use separate synchronized folders for the app and tests.")
+        }
+        let folderPrefix = Self.directoryPrefix(folder.path)
+        guard logicalPath == path, folder.logicalPath == folder.path, path.hasPrefix(folderPrefix) else {
+            throw ForgeError.invalidArguments("The output path '\(file.path)' crosses a symlink in an Xcode synchronized folder. Choose a folder with a direct path.")
+        }
+
+        let relative = String(path.dropFirst(folderPrefix.count))
+        func applies(_ paths: some Sequence<String>) -> Bool {
+            paths.contains { candidate in
+                let prefix = candidate.hasSuffix("/") ? candidate : candidate + "/"
+                return relative.compare(candidate, options: .caseInsensitive) == .orderedSame
+                    || relative.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil
+            }
+        }
+        let group = folder.group
+        let affected = (group.exceptions ?? []).contains { exception in
+            switch exception {
+            case let target as PBXFileSystemSynchronizedBuildFileExceptionSet:
+                return applies(target.membershipExceptions ?? [])
+                    || applies((target.platformFiltersByRelativePath ?? [:]).keys)
+            case let phase as PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet:
+                return applies(phase.membershipExceptions ?? [])
+            default:
+                return true
+            }
+        }
+        let nonSwiftPaths = (group.explicitFileTypes ?? [:]).filter { $0.value != "sourcecode.swift" }.keys
+        guard !affected, !applies(group.explicitFolders ?? []), !applies(nonSwiftPaths) else {
+            throw ForgeError.invalidArguments("An exception or file type override in the Xcode synchronized folder changes how '\(path)' is included. Review the folder settings in Xcode.")
+        }
+        return true
     }
 
     private static func selectTestTarget(in project: PBXProject, app: PBXNativeTarget, name: String?) throws -> PBXNativeTarget {

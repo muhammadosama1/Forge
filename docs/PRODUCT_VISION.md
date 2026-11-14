@@ -51,6 +51,7 @@ Project updates should be repeatable without duplicate entries, and Forge should
 - Built-in templates are embedded in Swift source. There is currently no user template override mechanism.
 - The Factory package dependency is declared for generated standalone packages and supported existing Swift packages when Factory is selected. Forge does not currently add it to an existing Xcode app project.
 - Forge registers generated Swift sources with the sole app target in an Xcode project, or with the app target selected by `--xcode-target` or `paths.xcode_target`. When tests are enabled, Forge can register them with an existing app-hosted unit-test target and resolve the app module through Xcode. Factory setup still requires manual wiring in Xcode. `--files-only` keeps the project file untouched.
+- For targets with separate dedicated Xcode synchronized folders, Forge writes each feature into the corresponding folder and relies on Xcode for target membership. It validates that the output belongs exclusively to the intended target and checks for exceptions affecting the generated paths.
 - Generation checks for existing destination files before writing and refuses to overwrite them. It does not currently offer an update or regeneration workflow.
 - The repository includes unit tests and a generated-code verification script that builds and tests a matrix of architecture, layer, and UI category combinations on macOS.
 
