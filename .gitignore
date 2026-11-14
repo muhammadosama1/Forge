@@ -4,6 +4,9 @@
 *.d
 *.zip
 *.md
+/AGENTS.md
+/Scripts/acceptance.py
+__pycache__/
 /Packages
 xcuserdata/
 DerivedData/
