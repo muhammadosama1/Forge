@@ -50,7 +50,7 @@ Project updates should be repeatable without duplicate entries, and Forge should
 - `--package` creates a standalone Swift package and its manifest. `--target` verifies an existing package target, routes files into its standard source and test directories, and updates literal manifests with a test target and Factory dependencies when selected. Dynamic manifests and custom target paths are not yet supported.
 - Built-in templates are embedded in Swift source. There is currently no user template override mechanism.
 - The Factory package dependency is declared for generated standalone packages and supported existing Swift packages when Factory is selected. Forge does not currently add it to an existing Xcode app project.
-- Forge registers generated Swift sources with the sole app target in an Xcode project, or with the app target selected by `--xcode-target` or `paths.xcode_target`. Xcode test target registration and Factory setup still require manual wiring. `--files-only` keeps the project file untouched.
+- Forge registers generated Swift sources with the sole app target in an Xcode project, or with the app target selected by `--xcode-target` or `paths.xcode_target`. When tests are enabled, Forge can register them with an existing app-hosted unit-test target and resolve the app module through Xcode. Factory setup still requires manual wiring in Xcode. `--files-only` keeps the project file untouched.
 - Generation checks for existing destination files before writing and refuses to overwrite them. It does not currently offer an update or regeneration workflow.
 - The repository includes unit tests and a generated-code verification script that builds and tests a matrix of architecture, layer, and UI category combinations on macOS.
 

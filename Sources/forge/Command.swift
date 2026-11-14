@@ -11,6 +11,7 @@ struct Command {
     /// Explicit Swift package target name, if `--target` was used.
     let packageTarget: String?
     let xcodeTarget: String?
+    let xcodeTestTarget: String?
     let filesOnly: Bool
     /// Whether `--no-domain` was passed.
     let shouldSkipDomain: Bool
@@ -37,6 +38,7 @@ struct Command {
         shouldCreatePackage: Bool,
         packageTarget: String?,
         xcodeTarget: String? = nil,
+        xcodeTestTarget: String? = nil,
         filesOnly: Bool = false,
         shouldSkipDomain: Bool,
         shouldGenerateTests: Bool,
@@ -53,6 +55,7 @@ struct Command {
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
         self.xcodeTarget = xcodeTarget
+        self.xcodeTestTarget = xcodeTestTarget
         self.filesOnly = filesOnly
         self.shouldSkipDomain = shouldSkipDomain
         self.shouldGenerateTests = shouldGenerateTests
@@ -67,7 +70,7 @@ struct Command {
 
     static let usage = """
     Usage:
-      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget> | --xcode-target <AppTarget> | --files-only] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [-form | -list]
+      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget> | --xcode-target <AppTarget> | --files-only] [--xcode-test-target <TestTarget>] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [-form | -list]
       forge init [--path <ProjectRoot>] [--force]
 
     Architecture flags (pick one):
@@ -137,6 +140,7 @@ struct Command {
       --package             Generate a Package.swift manifest
       --target <name>       Swift package target name for multi-target packages
       --xcode-target <name> Register generated sources with an existing Xcode app target
+      --xcode-test-target <name> Select an existing Xcode unit-test target when tests are enabled
       --files-only         Generate files without editing an Xcode project or package manifest
       -clean, --clean       Include Clean Architecture layers (Domain + Data)
       --no-clean            Omit Clean Architecture layers (overrides config)
@@ -159,6 +163,9 @@ struct Command {
     When no architecture flag is provided and no .forge.yml config exists,
     Forge prompts you interactively.
 
+    Automatic Xcode test registration requires full Xcode and an existing
+    app-hosted unit-test target. Forge selects a unique match when possible.
+
     CONFIGURATION (.forge.yml):
       Commit a .forge.yml file to establish team standards. Options:
       architecture:  mvvm, mvi, viper, vip, mvp
@@ -166,7 +173,7 @@ struct Command {
       testing:       xctest, swift-testing
       di:            native, factory (Factory library)
       flags:         clean, no_domain, tests
-      paths:         root, package, target, xcode_target
+      paths:         root, package, target, xcode_target, xcode_test_target
       naming:        type_prefix, type_suffix, folder_prefix, folder_suffix
 
     CLEAN ARCHITECTURE:
@@ -195,6 +202,7 @@ struct Command {
       forge make Login -mvvm
       forge make Login -mvvm -clean
       forge make Login -mvvm --tests
+      forge make Login -mvvm --tests --xcode-test-target "My AppTests"
       forge make Login --path /path/to/MyApp
       forge make Login --path /path/to/MyApp --package
       forge make Login --path /path/to/MyPackage --target FeatureKit
@@ -262,6 +270,7 @@ struct Command {
         var cliCreatePackage: Bool?
         var cliPackageTarget: String?
         var cliXcodeTarget: String?
+        var cliXcodeTestTarget: String?
         var filesOnly = false
         var cliSkipDomain: Bool?
         var cliGenerateTests: Bool?
@@ -293,6 +302,17 @@ struct Command {
                     throw ForgeError.invalidArguments("Provide one app target name with --xcode-target.")
                 }
                 cliXcodeTarget = arguments[next]
+                index += 2
+                continue
+            }
+            if argument == "--xcode-test-target" {
+                let next = index + 1
+                guard cliXcodeTestTarget == nil, next < arguments.count,
+                      !arguments[next].hasPrefix("-"),
+                      !arguments[next].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ForgeError.invalidArguments("Provide one unit-test target name with --xcode-test-target.")
+                }
+                cliXcodeTestTarget = arguments[next]
                 index += 2
                 continue
             }
@@ -348,9 +368,15 @@ struct Command {
         }
         var shouldSkipDomain = cliSkipDomain ?? config.flags.noDomain
         let shouldGenerateTests = cliGenerateTests ?? config.flags.tests
-        if xcodeTarget != nil {
+        let packageOutput = shouldCreatePackage || packageTarget != nil
+        if cliXcodeTestTarget != nil && (!shouldGenerateTests || filesOnly || packageOutput) {
+            throw ForgeError.invalidArguments("--xcode-test-target requires tests to be enabled and Xcode output. Use --tests and omit --files-only, --package, and --target.")
+        }
+        let xcodeTestTarget = shouldGenerateTests && !filesOnly && !packageOutput
+            ? cliXcodeTestTarget ?? config.paths.xcodeTestTarget : nil
+        if xcodeTarget != nil || xcodeTestTarget != nil {
             try FeatureGenerator.validateXcodeOptions(
-                package: shouldCreatePackage || packageTarget != nil, tests: shouldGenerateTests, di: config.di
+                package: packageOutput, di: config.di
             )
         }
         var useCleanLayers = cliCleanFlag ?? config.flags.clean
@@ -397,6 +423,7 @@ struct Command {
             shouldCreatePackage: shouldCreatePackage,
             packageTarget: packageTarget,
             xcodeTarget: xcodeTarget,
+            xcodeTestTarget: xcodeTestTarget,
             filesOnly: filesOnly,
             shouldSkipDomain: shouldSkipDomain,
             shouldGenerateTests: shouldGenerateTests,
@@ -412,7 +439,7 @@ struct Command {
 
     /// Executes the command: validates the feature name, generates files, prints results.
     /// - Throws: `ForgeError` on validation failures, file conflicts, or cancellation.
-    func run() throws {
+    func run(readXcodeBuildSettings: XcodeProjectIntegration.BuildSettingsReader = XcodeProjectIntegration.readBuildSettings) throws {
         // Validate and normalize the feature name into PascalCase with project naming rules
         let feature = try FeatureName(rawValue: featureName, naming: naming)
         // Resolve the complete set of required file roles for this architecture
@@ -423,6 +450,7 @@ struct Command {
             shouldCreatePackage: shouldCreatePackage,
             packageTarget: packageTarget,
             xcodeTarget: xcodeTarget,
+            xcodeTestTarget: xcodeTestTarget,
             filesOnly: filesOnly,
             shouldGenerateTests: shouldGenerateTests,
             shouldSkipDomain: shouldSkipDomain,
@@ -433,7 +461,7 @@ struct Command {
             di: di
         )
         // Generate templates and write files to disk
-        let result = try generator.generate(feature: feature, selection: resolvedSelection)
+        let result = try generator.generate(feature: feature, selection: resolvedSelection, readXcodeBuildSettings: readXcodeBuildSettings)
 
         // Output summary of created files
         if let configURL = loadedConfigURL {
@@ -452,6 +480,9 @@ struct Command {
                 print("\nDetected Xcode project: \(xcodeProject.lastPathComponent)")
                 if let xcodeTarget = result.registeredXcodeTarget {
                     print("Registered sources with Xcode app target: \(xcodeTarget)")
+                    if let testTarget = result.registeredXcodeTestTarget {
+                        print("Registered tests with Xcode unit-test target: \(testTarget)")
+                    }
                 } else if packageTarget == nil {
                     print("Files were generated only.")
                 }

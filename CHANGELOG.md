@@ -4,6 +4,7 @@
 
 ### Added
 - Register generated Swift sources with an existing Xcode app target. Forge selects a sole app target automatically, accepts a target from `--xcode-target` or `.forge.yml`, and supports `--files-only` for manual wiring.
+- Register generated tests with an existing app-hosted Xcode unit-test target and import the app's resolved Swift module. Select a target with `--xcode-test-target` or `paths.xcode_test_target` when needed.
 
 ### Fixed
 - Report actionable errors for missing or ambiguous targets, invalid configuration, missing architecture in scripts, and blocked output paths before writing feature files.

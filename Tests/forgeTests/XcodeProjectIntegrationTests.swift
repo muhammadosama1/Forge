@@ -37,6 +37,150 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: projectFile), project)
     }
 
+    func testInfersHostedUnitTestTargetAndUsesResolvedAppModule() throws {
+        try installUnitTestTarget()
+        let args = ["make", "Login", "-mvvm", "--tests", "--path", root.path]
+        let command = try Command.parse(arguments: args)
+        try command.run(readXcodeBuildSettings: buildSettings)
+
+        XCTAssertEqual(try registeredPaths(), expectedPaths("Login"))
+        let tests = "Login/Tests/LoginViewModelTests.swift"
+        XCTAssertEqual(try registeredPaths(phase: "A00000000000000000000009"), [tests])
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent(tests), encoding: .utf8)
+            .contains("@testable import CustomAppModule"))
+        let updated = try Data(contentsOf: projectFile)
+        XCTAssertThrowsError(try command.run(readXcodeBuildSettings: buildSettings))
+        XCTAssertEqual(try Data(contentsOf: projectFile), updated)
+    }
+
+    func testResolvesAutomaticSDKAndUsesSamePlatformForBothTargets() throws {
+        try installUnitTestTarget()
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        var queriedTargets: [String] = []
+        try command.run { project, target, configuration, sdk in
+            queriedTargets.append(target)
+            if target == "Demo App", sdk == nil {
+                return ["SDKROOT": "auto", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator"]
+            }
+            XCTAssertEqual(sdk, "iphoneos")
+            return try self.buildSettings(project, target, configuration, sdk)
+        }
+        XCTAssertEqual(queriedTargets, ["Demo App", "Demo App", "App Tests"])
+    }
+
+    func testExplicitTestTargetOverridesConfigAndVerifiesHostWithoutMetadata() throws {
+        try installUnitTestTarget(associated: false)
+        try "flags:\n  tests: true\npaths:\n  xcode_test_target: Missing\n".write(
+            to: root.appendingPathComponent(".forge.yml"), atomically: true, encoding: .utf8
+        )
+        let args = ["make", "Login", "-mvvm", "--path", root.path]
+        XCTAssertEqual(try Command.parse(arguments: args).xcodeTestTarget, "Missing")
+        XCTAssertNil(try Command.parse(arguments: args + ["--no-tests"]).xcodeTestTarget)
+        XCTAssertNil(try Command.parse(arguments: args + ["--files-only"]).xcodeTestTarget)
+        XCTAssertNil(try Command.parse(arguments: args + ["--target", "FeatureKit"]).xcodeTestTarget)
+        for flags in [["--no-tests"], ["--files-only"], ["--package"]] {
+            XCTAssertThrowsError(try Command.parse(arguments: args + flags + ["--xcode-test-target", "App Tests"]))
+        }
+        try Command.parse(arguments: args + ["--xcode-test-target", "App Tests"])
+            .run(readXcodeBuildSettings: buildSettings)
+        XCTAssertEqual(try registeredPaths(phase: "A00000000000000000000009"), ["Login/Tests/LoginViewModelTests.swift"])
+    }
+
+    func testInfersTestTargetFromDirectAppDependencyWhenHostAttributeIsAbsent() throws {
+        let dependency = "A0000000000000000000000B"
+        let project = unitTestProject(associated: false)
+            .replacingOccurrences(of: "name = \"App Tests\";", with: "name = \"App Tests\"; dependencies = (\(dependency));")
+            .replacingOccurrences(of: "objects = {", with: """
+                objects = {
+                    \(dependency) = {isa = PBXTargetDependency; target = A00000000000000000000003;};
+                """)
+        try project.write(to: projectFile, atomically: true, encoding: .utf8)
+        let args = ["make", "Login", "-mvvm", "--tests", "--path", root.path]
+        try Command.parse(arguments: args).run(readXcodeBuildSettings: buildSettings)
+        XCTAssertEqual(try registeredPaths(phase: "A00000000000000000000009"), ["Login/Tests/LoginViewModelTests.swift"])
+    }
+
+    func testTargetSelectionFailuresLeaveProjectAndOutputUntouched() throws {
+        let args = ["make", "Login", "-mvvm", "--tests", "--xcode-target", "Demo App", "--path", root.path]
+        for (project, extra, message) in [
+            (Self.project, [], "No Xcode unit-test target"),
+            (unitTestProject().replacingOccurrences(of: "bundle.unit-test", with: "bundle.ui-testing"),
+             ["--xcode-test-target", "App Tests"], "Expected one Xcode unit-test target"),
+            (unitTestProject().replacingOccurrences(of: "buildPhases = (A00000000000000000000009)", with: "buildPhases = ()"),
+             [], "Sources build phase"),
+            (unitTestProject(addSecondTestTarget: true), [], "'App Tests', 'Other Tests'"),
+        ] {
+            try project.write(to: projectFile, atomically: true, encoding: .utf8)
+            let original = try Data(contentsOf: projectFile)
+            XCTAssertThrowsError(try Command.parse(arguments: args + extra).run { _, _, _, _ in
+                XCTFail("Target selection should fail before reading build settings")
+                return [:]
+            }) { error in
+                XCTAssertTrue((error as? ForgeError)?.message.contains(message) == true, "\(error)")
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login").path))
+            XCTAssertEqual(try Data(contentsOf: projectFile), original)
+        }
+    }
+
+    func testBuildSettingsFailuresLeaveProjectAndOutputUntouched() throws {
+        try installUnitTestTarget()
+        let original = try Data(contentsOf: projectFile)
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        XCTAssertThrowsError(try command.run { project, target, configuration, sdk in
+            if target == "App Tests" { return ["TEST_HOST": "/build/Other.app/Other"] }
+            return try self.buildSettings(project, target, configuration, sdk)
+        }) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("Check TEST_HOST") == true)
+        }
+        XCTAssertThrowsError(try command.run { _, _, _, _ in
+            throw ForgeError.invalidArguments("xcodebuild unavailable")
+        })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testTestOutputInSynchronizedFolderIsRejectedBeforeReadingSettings() throws {
+        let group = "A0000000000000000000000C"
+        let project = unitTestProject()
+            .replacingOccurrences(of: "children = ();", with: "children = (\(group));")
+            .replacingOccurrences(of: "objects = {", with: """
+                objects = {
+                    \(group) = {isa = PBXFileSystemSynchronizedRootGroup; path = Login/Tests; sourceTree = "<group>";};
+                """)
+        try project.write(to: projectFile, atomically: true, encoding: .utf8)
+        let original = try Data(contentsOf: projectFile)
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        XCTAssertThrowsError(try command.run { _, _, _, _ in
+            XCTFail("Path validation should precede xcodebuild")
+            return [:]
+        }) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("synchronized folder") == true, "\(error)")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testBuildSettingsDecoderSelectsRequestedTargetAndRejectsMalformedOutput() throws {
+        let output = Data(#"[{"target":"Dependency","buildSettings":{}},{"target":"Demo App","buildSettings":{"PRODUCT_MODULE_NAME":"AppModule"}}]"#.utf8)
+        XCTAssertEqual(try XcodeProjectIntegration.decodeBuildSettings(output, target: "Demo App"), ["PRODUCT_MODULE_NAME": "AppModule"])
+        XCTAssertThrowsError(try XcodeProjectIntegration.decodeBuildSettings(output, target: "Missing"))
+        XCTAssertThrowsError(try XcodeProjectIntegration.decodeBuildSettings(Data("invalid".utf8), target: "Demo App"))
+    }
+
+    func testFailedProjectWriteRollsBackSourcesAndTests() throws {
+        try installUnitTestTarget()
+        let original = try Data(contentsOf: projectFile)
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: projectFile.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: projectFile.path) }
+        let command = try Command.parse(arguments: ["make", "Login", "-mvvm", "--tests", "--path", root.path])
+        XCTAssertThrowsError(try command.run(readXcodeBuildSettings: buildSettings))
+        let feature = root.appendingPathComponent("Login")
+        let entries = try XCTUnwrap(FileManager.default.enumerator(atPath: feature.path)).allObjects as? [String]
+        XCTAssertEqual(Set(entries ?? []), ["Presentation", "Tests"])
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
     func testConcurrentDistinctFeaturesKeepEverySourceAndMembership() throws {
         // Exercise two spellings of the same project root.
         let alias = root.appendingPathComponent("alias")
@@ -159,12 +303,14 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: path, encoding: .utf8), "replacement")
     }
 
-    private func registeredPaths() throws -> [String] {
+    private func registeredPaths(phase: String = "A00000000000000000000005") throws -> [String] {
         let data = try Data(contentsOf: projectFile)
         let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         let objects = try XCTUnwrap(plist["objects"] as? [String: [String: Any]])
-        let files = try XCTUnwrap(objects["A00000000000000000000005"]?["files"] as? [String])
-        XCTAssertEqual(objects["A00000000000000000000006"]?["files"] as? [String], [])
+        let files = try XCTUnwrap(objects[phase]?["files"] as? [String])
+        if let otherFiles = objects["A00000000000000000000006"]?["files"] as? [String] {
+            XCTAssertTrue(otherFiles.isEmpty)
+        }
         return try files.map { id in
             let ref = try XCTUnwrap(objects[id]?["fileRef"] as? String)
             return try XCTUnwrap(objects[ref]?["path"] as? String)
@@ -272,6 +418,40 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         try "paths:\n  xcode_target: \"\(target)\"\n".write(
             to: root.appendingPathComponent(".forge.yml"), atomically: true, encoding: .utf8
         )
+    }
+
+    private func buildSettings(_ project: URL, _ target: String, _ configuration: String, _ sdk: String?) throws -> [String: String] {
+        XCTAssertEqual(project.lastPathComponent, "Demo.xcodeproj")
+        XCTAssertEqual(configuration, "Debug")
+        if target == "App Tests" || target == "Other Tests" {
+            return ["TEST_HOST": "/build/Demo App.app/Demo App"]
+        }
+        XCTAssertEqual(target, "Demo App")
+        return ["PRODUCT_MODULE_NAME": "CustomAppModule", "TARGET_BUILD_DIR": "/build",
+                "EXECUTABLE_PATH": "Demo App.app/Demo App", "ENABLE_TESTABILITY": "YES"]
+    }
+
+    private func installUnitTestTarget(associated: Bool = true) throws {
+        try unitTestProject(associated: associated).write(to: projectFile, atomically: true, encoding: .utf8)
+    }
+
+    private func unitTestProject(associated: Bool = true, addSecondTestTarget: Bool = false) -> String {
+        let app = "A00000000000000000000003"
+        let tests = "A00000000000000000000004"
+        let other = "A0000000000000000000000A"
+        let targets = addSecondTestTarget ? "\(app), \(tests), \(other)" : "\(app), \(tests)"
+        let extraAttribute = addSecondTestTarget ? "\(other) = { TestTargetID = \(app); };" : ""
+        let attributes = associated
+            ? "attributes = { TargetAttributes = { \(tests) = { TestTargetID = \(app); }; \(extraAttribute) }; }; "
+            : ""
+        let extra = addSecondTestTarget
+            ? "\(other) = { isa = PBXNativeTarget; name = \"Other Tests\"; productType = \"com.apple.product-type.bundle.unit-test\"; buildPhases = (A00000000000000000000006); buildConfigurationList = A00000000000000000000007; };"
+            : ""
+        return Self.project
+            .replacingOccurrences(of: "targets = (\(app), \(tests));", with: "\(attributes)targets = (\(targets));")
+            .replacingOccurrences(of: "name = Other; productType = \"com.apple.product-type.application\"; buildPhases = (A00000000000000000000006)",
+                                  with: "name = \"App Tests\"; productType = \"com.apple.product-type.bundle.unit-test\"; buildPhases = (A00000000000000000000009)")
+            .replacingOccurrences(of: "objects = {", with: "objects = { \(extra) A00000000000000000000009 = {isa = PBXSourcesBuildPhase; files = ();};")
     }
 
     private static let project = """

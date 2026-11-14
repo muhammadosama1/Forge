@@ -1,0 +1,96 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        A00000000000000000000001 = {
+            isa = PBXProject;
+            attributes = { TargetAttributes = {
+                A00000000000000000000004 = { TestTargetID = A00000000000000000000003; };
+            }; };
+            buildConfigurationList = A00000000000000000000010;
+            mainGroup = A00000000000000000000002;
+            productRefGroup = A00000000000000000000005;
+            targets = (A00000000000000000000003, A00000000000000000000004);
+        };
+        A00000000000000000000002 = {
+            isa = PBXGroup;
+            children = (A00000000000000000000006, A00000000000000000000007, A00000000000000000000005);
+            sourceTree = "<group>";
+        };
+        A00000000000000000000003 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A00000000000000000000011;
+            buildPhases = (A0000000000000000000000B);
+            name = SmokeApp;
+            productReference = A00000000000000000000008;
+            productType = "com.apple.product-type.application";
+        };
+        A00000000000000000000004 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A00000000000000000000012;
+            buildPhases = (A0000000000000000000000C);
+            dependencies = (A0000000000000000000000D);
+            name = SmokeTests;
+            productReference = A00000000000000000000009;
+            productType = "com.apple.product-type.bundle.unit-test";
+        };
+        A00000000000000000000005 = {
+            isa = PBXGroup;
+            name = Products;
+            children = (A00000000000000000000008, A00000000000000000000009);
+            sourceTree = "<group>";
+        };
+        A00000000000000000000006 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeApp.swift; sourceTree = "<group>"; };
+        A00000000000000000000007 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
+        A00000000000000000000008 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = SmokeApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        A00000000000000000000009 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = SmokeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        A0000000000000000000000A = { isa = PBXBuildFile; fileRef = A00000000000000000000006; };
+        A0000000000000000000000B = { isa = PBXSourcesBuildPhase; files = (A0000000000000000000000A); };
+        A0000000000000000000000C = { isa = PBXSourcesBuildPhase; files = (); };
+        A0000000000000000000000D = { isa = PBXTargetDependency; target = A00000000000000000000003; targetProxy = A0000000000000000000000E; };
+        A0000000000000000000000E = {
+            isa = PBXContainerItemProxy;
+            containerPortal = A00000000000000000000001;
+            proxyType = 1;
+            remoteGlobalIDString = A00000000000000000000003;
+            remoteInfo = SmokeApp;
+        };
+        A00000000000000000000010 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000013); defaultConfigurationName = Debug; };
+        A00000000000000000000011 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000014); defaultConfigurationName = Debug; };
+        A00000000000000000000012 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000015); defaultConfigurationName = Debug; };
+        A00000000000000000000013 = {
+            isa = XCBuildConfiguration;
+            name = Debug;
+            buildSettings = {
+                CODE_SIGNING_ALLOWED = NO;
+                GENERATE_INFOPLIST_FILE = YES;
+                IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SDKROOT = auto;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+                SWIFT_VERSION = 5.0;
+            };
+        };
+        A00000000000000000000014 = {
+            isa = XCBuildConfiguration;
+            name = Debug;
+            baseConfigurationReference = A00000000000000000000007;
+            buildSettings = {
+                ENABLE_TESTABILITY = YES;
+                PRODUCT_BUNDLE_IDENTIFIER = org.forge.smoke.app;
+            };
+        };
+        A00000000000000000000015 = {
+            isa = XCBuildConfiguration;
+            name = Debug;
+            buildSettings = {
+                BUNDLE_LOADER = "$(TEST_HOST)";
+                PRODUCT_BUNDLE_IDENTIFIER = org.forge.smoke.tests;
+                TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SmokeApp.app/SmokeApp";
+            };
+        };
+    };
+    rootObject = A00000000000000000000001;
+}
