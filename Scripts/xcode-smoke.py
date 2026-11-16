@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate and run XCTest and Swift Testing suites in a hosted iOS test target."""
+"""Generate and run Factory-backed XCTest and Swift Testing suites in a hosted iOS test target."""
 
 import argparse
 from pathlib import Path
@@ -55,17 +55,26 @@ def smoke(forge, destination, root, *, synchronized):
     project_file = project / "Smoke.xcodeproj" / "project.pbxproj"
     if synchronized:
         use_synchronized_folders(project, project_file)
-    original_project = project_file.read_bytes()
     config = project / ".forge.yml"
-    config.write_text("testing: xctest\n", encoding="utf-8")
+    if synchronized:
+        original_project = project_file.read_bytes()
+        run([forge, "make", "SmokeNative", "-mvvm", "--no-tests", "--path", project], project)
+        if project_file.read_bytes() != original_project:
+            raise RuntimeError("Forge rewrote the synchronized fixture during native generation")
 
+    config.write_text("di: factory\ntesting: xctest\n", encoding="utf-8")
     run([forge, "make", "SmokeXCTest", "-mvvm", "--tests", "--path", project], project)
-    config.write_text("testing: swift-testing\n", encoding="utf-8")
+    factory_project = project_file.read_bytes()
+    config.write_text("di: factory\ntesting: swift-testing\n", encoding="utf-8")
     run([
         forge, "make", "SmokeSwiftTesting", "-mvvm", "--tests", "--path", project,
         "--xcode-test-target", "SmokeTests",
     ], project)
 
+    updated_project = project_file.read_bytes()
+    for entry in (b"isa = XCRemoteSwiftPackageReference;", b"productName = Factory;", b"productRef = "):
+        if updated_project.count(entry) != 1:
+            raise RuntimeError(f"Expected one Factory dependency entry matching {entry!r}")
     features = ("SmokeXCTest", "SmokeSwiftTesting")
     for feature in features:
         test_directory = project / "Tests" / feature if synchronized else project / feature / "Tests"
@@ -74,8 +83,8 @@ def smoke(forge, destination, root, *, synchronized):
             raise RuntimeError(f"Wrong test module import in {source}")
 
     if synchronized:
-        if project_file.read_bytes() != original_project:
-            raise RuntimeError("Forge rewrote the synchronized fixture")
+        if updated_project != factory_project:
+            raise RuntimeError("Forge rewrote the synchronized fixture after Factory was already linked")
         for feature in features:
             source = project / "App" / feature / "Presentation" / f"{feature}ViewModel.swift"
             if not source.is_file() or (project / "App" / feature / "Tests").exists():
@@ -103,7 +112,7 @@ def smoke(forge, destination, root, *, synchronized):
             expected = expected_tests if target == "SmokeTests" else {f"{feature}ViewModel.swift" for feature in features}
             if not expected <= compiled_files or (target == "SmokeApp" and expected_tests & compiled_files):
                 raise RuntimeError(f"Wrong Swift source membership for {target}: {sorted(compiled_files)}")
-    print(f"PASS generated XCTest and Swift Testing suites in Xcode ({layout} folders)", flush=True)
+    print(f"PASS generated XCTest and Swift Testing suites with Factory in Xcode ({layout} folders)", flush=True)
 
 
 def main():

@@ -375,9 +375,7 @@ struct Command {
         let xcodeTestTarget = shouldGenerateTests && !filesOnly && !packageOutput
             ? cliXcodeTestTarget ?? config.paths.xcodeTestTarget : nil
         if xcodeTarget != nil || xcodeTestTarget != nil {
-            try FeatureGenerator.validateXcodeOptions(
-                package: packageOutput, di: config.di
-            )
+            try FeatureGenerator.validateXcodeOptions(package: packageOutput)
         }
         var useCleanLayers = cliCleanFlag ?? config.flags.clean
 

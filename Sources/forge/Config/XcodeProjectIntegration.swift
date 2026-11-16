@@ -1,7 +1,7 @@
 import Foundation
 import XcodeProj
 
-/// Plans source membership changes before Forge writes any feature files.
+/// Plans target membership and dependency changes before Forge writes any feature files.
 struct XcodeProjectIntegration {
     typealias BuildSettingsReader = (URL, String, String, String?) throws -> [String: String]
 
@@ -130,7 +130,7 @@ struct XcodeProjectIntegration {
         return folders.first.map { URL(fileURLWithPath: $0.logicalPath, isDirectory: true).appendingPathComponent(feature, isDirectory: true) }
     }
 
-    func plan(files: [URL], testFiles: [URL], readBuildSettings: BuildSettingsReader) throws -> Update {
+    func plan(files: [URL], testFiles: [URL], factory: Bool, readBuildSettings: BuildSettingsReader) throws -> Update {
         guard let sources = try app.sourcesBuildPhase() else {
             throw ForgeError.invalidArguments("Xcode app target '\(app.name)' has no Sources build phase. Add a Compile Sources phase in Xcode or select a different target.")
         }
@@ -154,7 +154,7 @@ struct XcodeProjectIntegration {
                   let fullPath = try reference.fullPath(sourceRoot: sourceRoot) else { return nil }
             return resolvedPath(URL(fileURLWithPath: fullPath))
         })
-        var changed = false
+        var changed = try factory ? linkFactory() : false
         for (path, membership) in zip(paths, memberships) {
             guard existingPaths.insert(path).inserted else {
                 throw ForgeError.invalidArguments("The Xcode project already references '\(path)'.")
@@ -188,6 +188,85 @@ struct XcodeProjectIntegration {
         }
         return Update(targetName: app.name, testTargetName: tests?.name, testModuleName: moduleName,
                       projectFile: projectFile, original: original, updated: updated)
+    }
+
+    private func linkFactory() throws -> Bool {
+        let productName = "Factory"
+        let repository = "https://github.com/hmlongco/Factory.git"
+        let identity = "github.com/hmlongco/factory"
+        let packages = root.remotePackages.filter {
+            $0.repositoryURL.map(Self.repositoryIdentity) == identity
+        }
+        guard packages.count <= 1 else {
+            throw ForgeError.invalidArguments("Multiple Factory package references found. Keep one Factory package reference in Xcode and retry.")
+        }
+        let frameworks = app.buildPhases.compactMap { $0 as? PBXFrameworksBuildPhase }
+        let dependencies = app.packageProductDependencies ?? []
+        let declared = dependencies.filter { $0.productName == productName }
+        let linked = frameworks.flatMap { $0.files ?? [] }.filter { $0.product?.productName == productName }
+        let existingProduct = declared.first ?? linked.first?.product
+        let existingPackage = packages.first
+        guard declared.count <= 1, linked.count <= 1,
+              linked.allSatisfy({ $0.product === existingProduct && $0.platformFilter == nil && ($0.platformFilters ?? []).isEmpty }),
+              existingProduct == nil || (existingPackage != nil && existingProduct?.package === existingPackage),
+              !root.remotePackages.contains(where: { $0.name?.lowercased() == "factory" && $0 !== existingPackage }),
+              !root.localPackages.contains(where: { URL(fileURLWithPath: $0.relativePath).lastPathComponent.lowercased() == "factory" }) else {
+            throw ForgeError.invalidArguments("Conflicting Factory dependency for Xcode target '\(app.name)'. Check the project's Factory package and the target's linked libraries in Xcode.")
+        }
+        if let requirement = existingPackage?.versionRequirement {
+            let minimum: String?
+            switch requirement {
+            case let .upToNextMajorVersion(version), let .upToNextMinorVersion(version), let .exact(version),
+                 let .range(version, _):
+                minimum = version
+            case .branch, .revision:
+                minimum = nil
+            }
+            if let minimum, let major = minimum.split(separator: ".").first.flatMap({ Int($0) }), major >= 3 {
+                throw ForgeError.invalidArguments("Forge's Xcode templates require the Factory product from Factory 2.x. The project's Factory requirement starts at \(minimum). Use native DI or choose a compatible Factory version in Xcode.")
+            }
+        }
+
+        let package = existingPackage ?? XCRemoteSwiftPackageReference(
+            repositoryURL: repository, versionRequirement: .upToNextMajorVersion("2.4.0")
+        )
+        if existingPackage == nil {
+            graph.add(object: package)
+            root.remotePackages.append(package)
+        }
+        let product = existingProduct ?? XCSwiftPackageProductDependency(productName: productName, package: package)
+        if existingProduct == nil {
+            graph.add(object: product)
+        }
+        if declared.isEmpty {
+            app.packageProductDependencies = dependencies + [product]
+        }
+        if linked.isEmpty {
+            let phase = frameworks.first ?? PBXFrameworksBuildPhase()
+            if frameworks.isEmpty {
+                graph.add(object: phase)
+                app.buildPhases.append(phase)
+            }
+            let file = PBXBuildFile(product: product)
+            graph.add(object: file)
+            phase.files = (phase.files ?? []) + [file]
+        }
+        return declared.isEmpty || linked.isEmpty
+    }
+
+    private static func repositoryIdentity(_ repository: String) -> String {
+        var path = repository.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        for prefix in ["https://", "http://", "ssh://git@", "git@"] where path.hasPrefix(prefix) {
+            path.removeFirst(prefix.count)
+            break
+        }
+        if path.hasPrefix("github.com:") {
+            path = "github.com/" + path.dropFirst("github.com:".count)
+        }
+        if path.hasSuffix(".git") {
+            path.removeLast(4)
+        }
+        return path
     }
 
     private func usesSynchronizedMembership(_ file: URL, resolved path: String, target: PBXTarget) throws -> Bool {
@@ -328,29 +407,45 @@ struct XcodeProjectIntegration {
             let errors = try FileHandle(forWritingTo: stderr)
             defer { try? errors.close() }
 
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/xcodebuild")
-            process.currentDirectoryURL = project.deletingLastPathComponent()
             var arguments = [
                 "-project", project.path, "-target", target, "-configuration", configuration,
-                "-disableAutomaticPackageResolution", "-skipPackageUpdates", "-showBuildSettings", "-json",
+                "-skipPackageUpdates", "-showBuildSettings", "-json",
             ]
             if let sdk { arguments += ["-sdk", sdk] }
-            process.arguments = arguments
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = output
-            process.standardError = errors
-            let finished = DispatchSemaphore(value: 0)
-            process.terminationHandler = { _ in finished.signal() }
-            try process.run()
-            guard finished.wait(timeout: .now() + 60) == .success else {
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                throw ForgeError.invalidArguments("xcodebuild timed out while reading build settings for \(context).")
-            }
-            guard process.terminationStatus == 0 else {
+
+            func query(allowsPackageResolution: Bool) throws -> (status: Int32, diagnostic: String) {
+                for handle in [output, errors] {
+                    try handle.truncate(atOffset: 0)
+                    try handle.seek(toOffset: 0)
+                }
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/xcodebuild")
+                process.currentDirectoryURL = project.deletingLastPathComponent()
+                process.arguments = arguments + (allowsPackageResolution ? [] : ["-disableAutomaticPackageResolution"])
+                process.standardInput = FileHandle.nullDevice
+                process.standardOutput = output
+                process.standardError = errors
+                let finished = DispatchSemaphore(value: 0)
+                process.terminationHandler = { _ in finished.signal() }
+                try process.run()
+                guard finished.wait(timeout: .now() + (allowsPackageResolution ? 120 : 60)) == .success else {
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    throw ForgeError.invalidArguments("xcodebuild timed out while reading build settings for \(context).")
+                }
                 let diagnostic = try String(contentsOf: stderr, encoding: .utf8)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                let detail = diagnostic.isEmpty ? "Exit status \(process.terminationStatus)." : String(diagnostic.suffix(2000))
+                return (process.terminationStatus, diagnostic)
+            }
+
+            var result = try query(allowsPackageResolution: false)
+            // A previous Forge run may have added Factory before Xcode has resolved it.
+            if result.status != 0,
+               result.diagnostic.contains("automatic dependency resolution is disabled"),
+               result.diagnostic.range(of: #"dependencies were added:[^\n]*'factory'\s*\("#, options: .regularExpression) != nil {
+                result = try query(allowsPackageResolution: true)
+            }
+            guard result.status == 0 else {
+                let detail = result.diagnostic.isEmpty ? "Exit status \(result.status)." : String(result.diagnostic.suffix(2000))
                 throw ForgeError.invalidArguments("Could not resolve build settings for \(context). Select a full Xcode installation and resolve project dependencies in Xcode. \(detail)")
             }
             return try decodeBuildSettings(Data(contentsOf: stdout), target: target, context: context)
