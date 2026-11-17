@@ -89,7 +89,7 @@ struct FeatureGenerator {
         let packageOutput = shouldCreatePackage || packageTarget != nil
         let integratesXcode = !filesOnly && (xcodeTarget != nil || xcodeTestTarget != nil || (!packageOutput && !xcodeProjects.isEmpty))
         if integratesXcode {
-            try Self.validateXcodeOptions(package: packageOutput, di: di)
+            try Self.validateXcodeOptions(package: packageOutput)
             guard !xcodeProjects.isEmpty else {
                 throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set --path or paths.root to the directory containing your Xcode project.")
             }
@@ -254,7 +254,8 @@ struct FeatureGenerator {
         }
 
         let xcodeUpdate = try xcodeIntegration?.plan(
-            files: files.map(\.url), testFiles: testURLs, readBuildSettings: readXcodeBuildSettings
+            files: files.map(\.url), testFiles: testURLs, factory: di == .factory,
+            readBuildSettings: readXcodeBuildSettings
         )
 
         if let moduleName = xcodeUpdate?.testModuleName {
@@ -315,12 +316,9 @@ struct FeatureGenerator {
 
     // MARK: - Helpers
 
-    static func validateXcodeOptions(package: Bool, di: DependencyInjectionStrategy) throws {
+    static func validateXcodeOptions(package: Bool) throws {
         if package {
             throw ForgeError.invalidArguments("Xcode app target integration cannot be combined with Swift package output. Choose either --xcode-target or Swift package options (--package or --target). Check paths.package and paths.target if these came from .forge.yml.")
-        }
-        if di != .native {
-            throw ForgeError.invalidArguments("Forge cannot wire Factory into an Xcode app target. Set di: native for automatic registration, or use --files-only and wire the generated files and Factory into Xcode manually.")
         }
     }
 

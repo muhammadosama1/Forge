@@ -75,7 +75,7 @@ Customize generated Views and State handlers with functional UI logic instead of
 * **`--target <name>`**: Target names must start with an ASCII letter or underscore and contain only ASCII letters, digits, underscores, or hyphens; Swift reserved names are rejected. The same rules apply to `paths.target`. For an existing Swift package, Forge verifies the target in `Package.swift`, routes files into `Sources/<Target>/<Feature>`, adds a test target when `--tests` is used, and adds Factory package and target dependencies when `di: factory` is selected. Manifest updates require literal target and dependency arrays and the standard `Sources/<Target>` layout; unsupported manifests fail before feature files are written.
 * **`--xcode-target <name>`**: Register generated Swift sources in an Xcode app target. With one `.xcodeproj` and one app target, Forge selects it automatically. For projects with multiple app targets, select one with `--xcode-target "My App"` or `paths.xcode_target`. Point `--path` at the directory containing the `.xcodeproj`.
 * **`--xcode-test-target <name>`**: With tests enabled, select an existing app-hosted Xcode unit-test target. Forge automatically selects a unique match when possible. Automatic test registration requires full Xcode and an app build configuration with testability enabled.
-* **`--files-only`**: Generate files in the project root for manual wiring, including projects with unusual Xcode layouts or Factory. For automatic integration of app sources only, use `--no-tests` and native DI.
+* **`--files-only`**: Generate files in the project root for manual wiring, including projects with unusual Xcode layouts. For automatic integration of app sources only, use `--no-tests`.
 * **`--tests`**: Automatically generates matching unit test suites (`XCTestCase`, UseCase mocks).
 * **`--no-tests`**: Skips test generation (overrides `.forge.yml`).
 
@@ -137,7 +137,9 @@ naming:
 
 ### Dependency Injection Options (`di`)
 * **`native`** *(default)*: Generates self-contained static factory containers (`enum FeatureDependencyContainer`) with pure Swift composition without external dependencies.
-* **`factory`** *(aliases: `factory-di`)*: Integrates Michael Long's [Factory](https://github.com/hmlongco/Factory) library. Generates `extension Container` with typed registrations (`var featureView: Factory<...>`, etc.) while preserving static factory helpers (`FeatureDependencyContainer.makeView()`, `FeatureDependencyContainer.makeViewModel()`) that delegate to `Container.shared`. Automatically declares Factory package and target dependencies in generated standalone Swift packages and supported existing Swift packages. Add Factory to an Xcode app project manually.
+* **`factory`** *(aliases: `factory-di`)*: Integrates Michael Long's [Factory](https://github.com/hmlongco/Factory) library. Generates `extension Container` with typed registrations (`var featureView: Factory<...>`, etc.) while preserving static factory helpers (`FeatureDependencyContainer.makeView()`, `FeatureDependencyContainer.makeViewModel()`) that delegate to `Container.shared`. Forge adds the `Factory` product to generated standalone Swift packages, supported existing Swift packages, and selected Xcode app targets. For a new dependency, Forge uses Factory 2.4.0 up to the next major version. For Xcode projects with an existing reference to the official Factory repository, Forge preserves its version requirement. Generated code uses the `Factory` product available in Factory 2.x.
+
+If you generate Xcode tests before Xcode has resolved the newly added Factory dependency, Forge lets Xcode resolve it while reading the test target's build settings. Xcode may create or update `Package.resolved` during this step.
 
 When `paths.target` is set for an existing package, `paths.root` must point to that package's root, where `Package.swift` lives.
 

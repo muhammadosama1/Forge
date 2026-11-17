@@ -37,6 +37,78 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: projectFile), project)
     }
 
+    func testAddsFactoryToSelectedAppAndReusesItForAnotherFeature() throws {
+        try configureFactory()
+        for feature in ["Login", "Profile"] {
+            try Command.parse(arguments: ["make", feature, "-mvvm", "--path", root.path,
+                                          "--xcode-target", "Demo App"]).run()
+        }
+        let objects = try projectObjects()
+        let packages = objects.filter { $0.value["isa"] as? String == "XCRemoteSwiftPackageReference" }
+        let package = try XCTUnwrap(packages.first)
+        XCTAssertEqual(packages.count, 1)
+        XCTAssertEqual(package.value["repositoryURL"] as? String, "https://github.com/hmlongco/Factory.git")
+        XCTAssertEqual(package.value["requirement"] as? [String: String],
+                       ["kind": "upToNextMajorVersion", "minimumVersion": "2.4.0"])
+        XCTAssertEqual(objects["A00000000000000000000001"]?["packageReferences"] as? [String], [package.key])
+        let products = objects.filter { $0.value["isa"] as? String == "XCSwiftPackageProductDependency" }
+        let product = try XCTUnwrap(products.first)
+        XCTAssertEqual(products.count, 1)
+        XCTAssertEqual(product.value["productName"] as? String, "Factory")
+        XCTAssertEqual(product.value["package"] as? String, package.key)
+        let app = try XCTUnwrap(objects["A00000000000000000000003"])
+        XCTAssertEqual(app["packageProductDependencies"] as? [String], [product.key])
+        XCTAssertTrue((objects["A00000000000000000000004"]?["packageProductDependencies"] as? [String] ?? []).isEmpty)
+        let phases = try XCTUnwrap(app["buildPhases"] as? [String])
+        let frameworks = phases.compactMap { objects[$0] }.filter { $0["isa"] as? String == "PBXFrameworksBuildPhase" }
+        XCTAssertEqual(frameworks.count, 1)
+        let links = try XCTUnwrap(frameworks.first?["files"] as? [String])
+        XCTAssertEqual(links.count, 1)
+        XCTAssertEqual(objects[try XCTUnwrap(links.first)]?["productRef"] as? String, product.key)
+        XCTAssertEqual(try registeredPaths().sorted(), (expectedPaths("Login") + expectedPaths("Profile")).sorted())
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("Login/LoginDependencyContainer.swift"),
+                                 encoding: .utf8).contains("import Factory"))
+    }
+
+    func testReusesExistingFactoryPackageRequirementAndFrameworksPhase() throws {
+        try configureFactory()
+        let packageID = "A00000000000000000000010"
+        let frameworksID = "A00000000000000000000011"
+        let productID = "A00000000000000000000012"
+        let project = Self.project
+            .replacingOccurrences(of: "isa = PBXProject;", with: "isa = PBXProject; packageReferences = (\(packageID));")
+            .replacingOccurrences(of: "buildPhases = (A00000000000000000000005);",
+                                  with: "buildPhases = (A00000000000000000000005, \(frameworksID)); packageProductDependencies = (\(productID));")
+            .replacingOccurrences(of: "objects = {", with: """
+                objects = {
+                    \(packageID) = {isa = XCRemoteSwiftPackageReference; repositoryURL = "git@github.com:hmlongco/factory"; requirement = {kind = exactVersion; version = 2.5.3;};};
+                    \(frameworksID) = {isa = PBXFrameworksBuildPhase; files = ();};
+                    \(productID) = {isa = XCSwiftPackageProductDependency; productName = Factory; package = \(packageID);};
+                """)
+        for version in ["3.0.0", "2.5.3"] {
+            let fixture = project.replacingOccurrences(of: "version = 2.5.3;", with: "version = \(version);")
+            try fixture.write(to: projectFile, atomically: true, encoding: .utf8)
+            let command = try self.command(target: "Demo App")
+            if version == "3.0.0" {
+                XCTAssertThrowsError(try command.run()) {
+                    XCTAssertTrue(($0 as? ForgeError)?.message.contains("Factory 2.x") == true)
+                }
+                XCTAssertEqual(try String(contentsOf: projectFile, encoding: .utf8), fixture)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login").path))
+            } else {
+                try command.run()
+            }
+        }
+        let objects = try projectObjects()
+        XCTAssertEqual(objects.filter { $0.value["isa"] as? String == "XCRemoteSwiftPackageReference" }.count, 1)
+        XCTAssertEqual(objects[packageID]?["requirement"] as? [String: String], ["kind": "exactVersion", "version": "2.5.3"])
+        XCTAssertEqual(objects.filter { $0.value["isa"] as? String == "PBXFrameworksBuildPhase" }.count, 1)
+        let files = try XCTUnwrap(objects[frameworksID]?["files"] as? [String])
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(objects[try XCTUnwrap(files.first)]?["productRef"] as? String, productID)
+        XCTAssertEqual(objects.filter { $0.value["isa"] as? String == "XCSwiftPackageProductDependency" }.count, 1)
+    }
+
     func testInfersHostedUnitTestTargetAndUsesResolvedAppModule() throws {
         try installUnitTestTarget()
         let args = ["make", "Login", "-mvvm", "--tests", "--path", root.path]
@@ -402,9 +474,7 @@ final class XcodeProjectIntegrationTests: XCTestCase {
     }
 
     private func registeredPaths(phase: String = "A00000000000000000000005") throws -> [String] {
-        let data = try Data(contentsOf: projectFile)
-        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        let objects = try XCTUnwrap(plist["objects"] as? [String: [String: Any]])
+        let objects = try projectObjects()
         let files = try XCTUnwrap(objects[phase]?["files"] as? [String])
         if let otherFiles = objects["A00000000000000000000006"]?["files"] as? [String] {
             XCTAssertTrue(otherFiles.isEmpty)
@@ -413,6 +483,16 @@ final class XcodeProjectIntegrationTests: XCTestCase {
             let ref = try XCTUnwrap(objects[id]?["fileRef"] as? String)
             return try XCTUnwrap(objects[ref]?["path"] as? String)
         }
+    }
+
+    private func projectObjects() throws -> [String: [String: Any]] {
+        let data = try Data(contentsOf: projectFile)
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        return try XCTUnwrap(plist["objects"] as? [String: [String: Any]])
+    }
+
+    private func configureFactory() throws {
+        try "di: factory\n".write(to: root.appendingPathComponent(".forge.yml"), atomically: true, encoding: .utf8)
     }
 
     private func expectedPaths(_ name: String) -> [String] {
