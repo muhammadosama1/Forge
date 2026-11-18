@@ -13,6 +13,7 @@ struct Command {
     let xcodeTarget: String?
     let xcodeTestTarget: String?
     let filesOnly: Bool
+    let dryRun: Bool
     /// Whether `--no-domain` was passed.
     let shouldSkipDomain: Bool
     /// Whether `--tests` was passed.
@@ -40,6 +41,7 @@ struct Command {
         xcodeTarget: String? = nil,
         xcodeTestTarget: String? = nil,
         filesOnly: Bool = false,
+        dryRun: Bool = false,
         shouldSkipDomain: Bool,
         shouldGenerateTests: Bool,
         type: FeatureType,
@@ -57,6 +59,7 @@ struct Command {
         self.xcodeTarget = xcodeTarget
         self.xcodeTestTarget = xcodeTestTarget
         self.filesOnly = filesOnly
+        self.dryRun = dryRun
         self.shouldSkipDomain = shouldSkipDomain
         self.shouldGenerateTests = shouldGenerateTests
         self.type = type
@@ -70,8 +73,10 @@ struct Command {
 
     static let usage = """
     Usage:
-      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget> | --xcode-target <AppTarget> | --files-only] [--xcode-test-target <TestTarget>] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [-form | -list]
+      forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget> | --xcode-target <AppTarget> | --files-only] [--xcode-test-target <TestTarget>] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [--dry-run] [-form | -list]
       forge init [--path <ProjectRoot>] [--force]
+      forge templates list
+      forge templates export <name> [--path <ProjectRoot>] [--config <ConfigFile>]
 
     Architecture flags (pick one):
       -mvvm, -mvi, -viper, -vip, -mvp
@@ -134,7 +139,13 @@ struct Command {
       --path <dir>          Directory to create .forge.yml in (default: current directory)
       --force               Overwrite existing .forge.yml
 
+    TEMPLATE COMMANDS:
+      templates list                    List built-in template names
+      templates export <name> [--path <dir>] [--config <file>]
+                                        Export one local override (never overwrites)
+
     MAKE OPTIONS:
+      --dry-run             Plan files and integration without writing or resolving dependencies
       --path <dir>          Project root directory (default: current directory)
       --config <path>       Path to .forge.yml configuration file
       --package             Generate a Package.swift manifest
@@ -272,6 +283,7 @@ struct Command {
         var cliXcodeTarget: String?
         var cliXcodeTestTarget: String?
         var filesOnly = false
+        var dryRun = false
         var cliSkipDomain: Bool?
         var cliGenerateTests: Bool?
         var cliCleanFlag: Bool?
@@ -289,6 +301,7 @@ struct Command {
             if try parseConfigFlag(argument, arguments: arguments, at: &index, configPath: &explicitConfigPath) { continue }
             if parsePackageFlag(argument, at: &index, shouldCreatePackage: &cliCreatePackage) { continue }
             if try parseTargetFlag(argument, arguments: arguments, at: &index, packageTarget: &cliPackageTarget) { continue }
+            if argument == "--dry-run" { dryRun = true; index += 1; continue }
             if argument == "--files-only" {
                 filesOnly = true
                 index += 1
@@ -423,6 +436,7 @@ struct Command {
             xcodeTarget: xcodeTarget,
             xcodeTestTarget: xcodeTestTarget,
             filesOnly: filesOnly,
+            dryRun: dryRun,
             shouldSkipDomain: shouldSkipDomain,
             shouldGenerateTests: shouldGenerateTests,
             type: type,
@@ -450,13 +464,15 @@ struct Command {
             xcodeTarget: xcodeTarget,
             xcodeTestTarget: xcodeTestTarget,
             filesOnly: filesOnly,
+            dryRun: dryRun,
             shouldGenerateTests: shouldGenerateTests,
             shouldSkipDomain: shouldSkipDomain,
             type: type,
             category: category,
             binding: binding,
             testing: testing,
-            di: di
+            di: di,
+            templateDirectory: (loadedConfigURL?.deletingLastPathComponent() ?? projectPath).appendingPathComponent(".forge/templates")
         )
         // Generate templates and write files to disk
         let result = try generator.generate(feature: feature, selection: resolvedSelection, readXcodeBuildSettings: readXcodeBuildSettings)
@@ -465,11 +481,27 @@ struct Command {
         if let configURL = loadedConfigURL {
             print("Using standards from \(configURL.lastPathComponent)")
         }
-        print("Created \(type.displayName) feature: \(feature.typeName)")
+        print("\(dryRun ? "Planned" : "Created") \(type.displayName) feature: \(feature.typeName)")
+        if dryRun {
+            print("Output: \(projectPath.path); category: \(category?.rawValue ?? "default"); layers: \(shouldSkipDomain ? "data only" : (type.hasCleanLayers ? "clean" : "presentation"))")
+            if let target = result.detectedSwiftPackageTarget { print("Package target: \(target)") }
+            if let package = result.createdSwiftPackage { print("New package: \(package.path)") }
+            print("Binding: \(binding.rawValue); tests: \(shouldGenerateTests ? testing.rawValue : "off"); DI: \(di.rawValue)")
+            if di == .factory { print("Factory dependency: add if absent; preserve compatible existing requirements.") }
+            if result.registeredXcodeTestTarget != nil {
+                print("Xcode module name, Test Host and testability checks are deferred until generation; no xcodebuild or dependency resolution was run.")
+            }
+        }
         for file in result.createdFiles {
-            print("  + \(file.path)")
+            print("  \(dryRun && FileManager.default.fileExists(atPath: file.path) ? "~" : "+") \(file.path)")
         }
 
+        if dryRun {
+            if let target = result.registeredXcodeTarget { print("App target: \(target)") }
+            if let target = result.registeredXcodeTestTarget { print("Test target: \(target)") }
+            print("Dry run complete. No files or dependencies were changed.")
+            return
+        }
         // Display additional package or Xcode project status
         if let packageRoot = result.createdSwiftPackage {
             print("\nCreated Swift package: \(packageRoot.path)")

@@ -1,102 +1,64 @@
 import Foundation
 
-/// Lightweight template renderer supporting `{{ variable }}` substitution
-/// and `{% if key %}...{% endif %}` conditional blocks.
-///
-/// This covers 100% of the syntax used by the project's `.stencil` files
-/// without pulling in any external dependency.
+/// Forge template contract v1: variables and nested boolean if/else blocks only.
 enum TemplateRenderer {
-
-    /// Errors produced during template rendering.
-    enum RendererError: Error {
-        /// No template found for the given key in `TemplateContent.files`.
-        case templateNotFound(String)
-        /// Template was found but could not be read.
-        case unreadableTemplate(String)
-    }
-
-    /// Renders `templateName` by first processing conditionals, then substituting variables.
-    /// - Parameter templateName: Template dictionary key (e.g. `"viewModel.stencil"`).
-    /// - Parameter context: Variable and flag values for substitution and conditional evaluation.
-    static func render(
-        _ templateName: String,
-        context: [String: Any]
-    ) throws -> String {
-        guard let raw = TemplateContent.files[templateName] else {
-            throw RendererError.templateNotFound(templateName)
+    enum RendererError: Error { case templateNotFound(String) }
+    static let booleanKeys = "hasDependencyContainer hasInteractor hasNoDomain hasPresenter hasRemoteDataSource hasRepository hasRouter hasStore hasTests hasUseCase hasView hasViewModel hasWorker isClean isConcurrency isFactory isForm isList isMVVM isMVI isMVP isSwiftTesting isVIP isVIPER isPackage".split(separator: " ").map(String.init)
+    static func render(_ templateName: String, context: [String: Any], overrides: URL? = nil) throws -> String {
+        guard TemplateContent.files[templateName] != nil else { throw RendererError.templateNotFound(templateName) }
+        let raw = try TemplateCatalog.source(templateName, overrides: overrides)
+        var values: [String: Any] = Dictionary(uniqueKeysWithValues: booleanKeys.map { ($0, false as Any) })
+        values.merge(context) { _, supplied in supplied }
+        if let name = context["name"] as? String {
+            if values["moduleName"] == nil { values["moduleName"] = name }
+            if values["propertyName"] == nil { values["propertyName"] = name.prefix(1).lowercased() + name.dropFirst() }
         }
-        let stripped = processConditionals(raw, context: context)
-        return substituteVariables(stripped, context: context)
+        return try renderSource(raw, context: values, name: templateName)
     }
 
-    // MARK: - Conditional block processing
-
-    /// Matches innermost `{% if key %}...{% else %}...{% endif %}` blocks.
-    /// The body capture uses a negative lookahead to reject nested `{% if` inside the match,
-    /// ensuring innermost blocks are resolved first on each iteration.
-    private static let conditionalRegex: NSRegularExpression = {
-        let body = #"((?:(?!\{%\s*if\s+)[\s\S])*?)"#
-        let pattern = #"\{%\s*if\s+(\w+)\s*%\}"# + body + #"(?:\{%\s*else\s*%\}"# + body + #")?\{%\s*endif\s*%\}"#
-        return try! NSRegularExpression(pattern: pattern, options: [])
-    }()
-
-    /// Iteratively removes `{% if key %}…{% else %}…{% endif %}` blocks,
-    /// keeping only the content of the branch that matches the context.
-    /// Multiple passes handle nested and sibling blocks.
-    private static func processConditionals(_ text: String, context: [String: Any]) -> String {
-        var result = text
-        let regex = Self.conditionalRegex
-
-        // Loop until no matching conditional tags remain in the template text
-        while true {
-            let range = NSRange(result.startIndex..., in: result)
-            // Find the first innermost matching block
-            guard let match = regex.firstMatch(in: result, range: range) else { break }
-
-            let fullRange   = Range(match.range(at: 0), in: result)!
-            let keyRange    = Range(match.range(at: 1), in: result)!
-            let ifBodyRange = Range(match.range(at: 2), in: result)!
-
-            let key    = String(result[keyRange])
-            // Evaluate truthiness in the context map
-            let isTrue = (context[key] as? Bool) == true
-
-            let replacement: String
-            if isTrue {
-                // If condition is true, substitute with the 'if' body
-                replacement = String(result[ifBodyRange])
-            } else if match.range(at: 3).location != NSNotFound {
-                // If condition is false and an 'else' block exists, substitute with the 'else' body
-                let elseBodyRange = Range(match.range(at: 3), in: result)!
-                replacement = String(result[elseBodyRange])
-            } else {
-                // If condition is false without an 'else' block, remove the whole block
-                replacement = ""
+    static func renderSource(_ raw: String, context: [String: Any], name: String) throws -> String {
+        let regex = try NSRegularExpression(pattern: #"\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}"#)
+        var result = ""
+        var cursor = raw.startIndex
+        var stack: [(parent: Bool, condition: Bool, sawElse: Bool)] = []
+        var active = true
+        func invalid(_ detail: String) -> ForgeError {
+            .invalidArguments("Template '\(name)': \(detail)")
+        }
+        func appendLiteral(_ literal: Substring) throws {
+            guard !literal.contains("{{"), !literal.contains("{%") else {
+                throw invalid("unterminated template tag")
             }
-
-            // Replace the entire matched {% if %}...{% endif %} range with the selected branch
-            result.replaceSubrange(fullRange, with: replacement)
+            if active { result += literal }
         }
-
-        return result
-    }
-
-    // MARK: - Variable substitution
-
-    /// Replaces `{{ variable }}` placeholders with their context values.
-    /// Keys are sorted longest-first to avoid partial collisions (e.g. `hasNoDomain`
-    /// should match before `hasDomain`).
-    private static func substituteVariables(_ text: String, context: [String: Any]) -> String {
-        var result = text
-        // Sorting longest-first prevents substring replacement collisions
-        let sortedKeys = context.keys.sorted { $0.count > $1.count }
-        for key in sortedKeys {
-            guard let value = context[key] else { continue }
-            // Support both spaced {{ key }} and unspaced {{key}} syntax
-            result = result
-                .replacingOccurrences(of: "{{ \(key) }}", with: "\(value)")
-                .replacingOccurrences(of: "{{\(key)}}", with: "\(value)")
+        for match in regex.matches(in: raw, range: NSRange(raw.startIndex..., in: raw)) {
+            let range = Range(match.range, in: raw)!
+            try appendLiteral(raw[cursor..<range.lowerBound])
+            let token = String(raw[range])
+            let body = token.dropFirst(2).dropLast(2).trimmingCharacters(in: .whitespacesAndNewlines)
+            if token.hasPrefix("{{") {
+                guard let value = context[body] else { throw invalid("unknown variable '\(body)'") }
+                if active { result += String(describing: value) }
+            } else if body.hasPrefix("if ") {
+                let key = String(body.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                guard let condition = context[key] as? Bool else { throw invalid("unknown boolean '\(key)'") }
+                stack.append((active, condition, false))
+                active = active && condition
+            } else if body == "else" {
+                guard var frame = stack.popLast(), !frame.sawElse else { throw invalid("unexpected else") }
+                frame.sawElse = true
+                stack.append(frame)
+                active = frame.parent && !frame.condition
+            } else if body == "endif" {
+                guard let frame = stack.popLast() else { throw invalid("unexpected endif") }
+                active = frame.parent
+            } else {
+                throw invalid("unsupported tag '\(body)'")
+            }
+            cursor = range.upperBound
         }
+        try appendLiteral(raw[cursor...])
+        guard stack.isEmpty else { throw invalid("missing endif") }
         return result
     }
 }

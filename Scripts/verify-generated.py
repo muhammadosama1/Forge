@@ -141,6 +141,22 @@ def main():
                         "--path", directory, *LAYERS[layer], *LAYOUTS[layout],
                     ], ROOT, log, args.timeout)
 
+                    # Compile a separate consumer with a normal import. @testable hides API visibility bugs.
+                    consumer = Path(directory) / "Consumer"
+                    (consumer / "Sources" / "Consumer").mkdir(parents=True)
+                    (consumer / "Package.swift").write_text(f'''// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(name: "Consumer", platforms: [.macOS(.v14)],
+    dependencies: [.package(path: "../Sample")],
+    targets: [.target(name: "Consumer", dependencies: [.product(name: "{target}", package: "Sample")])])
+''')
+                    (consumer / "Sources" / "Consumer" / "Consumer.swift").write_text(f'''import SwiftUI
+import {target.replace("-", "_")}
+@MainActor public func feature() -> some View {{ SampleFeature.makeView() }}
+''')
+                    run(["swift", "build", "--package-path", str(consumer), "--jobs", str(args.jobs)],
+                        ROOT, log, args.timeout)
+
                     if args.testing == "swift-testing":
                         test_output = run([
                             "swift", "test", "--package-path", str(Path(directory) / "Sample"),

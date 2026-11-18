@@ -18,6 +18,35 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         if let root { try FileManager.default.removeItem(at: root) }
     }
 
+    func testMalformedTestOverrideFailsBeforeResolvingDependencies() throws {
+        try installUnitTestTarget()
+        try configureFactory()
+        let original = try Data(contentsOf: projectFile)
+        try TemplateCatalog.run(arguments: ["templates", "export", "viewModelTests", "--path", root.path])
+        try "{{ missing }}".write(to: root.appendingPathComponent(".forge/templates/viewModelTests.stencil"), atomically: true, encoding: .utf8)
+        let command = try Command.parse(arguments: ["make", "Profile", "-mvvm", "--tests", "--path", root.path, "--xcode-target", "Demo App"])
+        XCTAssertThrowsError(try command.run { _, _, _, _ in
+            XCTFail("Invalid templates must be rejected before dependency resolution")
+            return [:]
+        })
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Profile").path))
+    }
+
+    func testDryRunDoesNotResolveBuildSettingsOrChangeProject() throws {
+        try installUnitTestTarget()
+        try configureFactory()
+        let original = try Data(contentsOf: projectFile)
+        let before = try FileManager.default.subpathsOfDirectory(atPath: root.path).sorted()
+        let command = try Command.parse(arguments: ["make", "Profile", "-mvvm", "--tests", "--dry-run", "--path", root.path, "--xcode-target", "Demo App"])
+        try command.run { _, _, _, _ in
+            XCTFail("Dry runs must never invoke xcodebuild or resolve packages")
+            return [:]
+        }
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+        XCTAssertEqual(try FileManager.default.subpathsOfDirectory(atPath: root.path).sorted(), before)
+    }
+
     func testRegistersSourcesOnlyWithSelectedAppTarget() throws {
         try writeConfig(target: "Demo App")
         let configuredCommand = try Command.parse(arguments: ["make", "Login", "-mvvm", "--path", root.path])

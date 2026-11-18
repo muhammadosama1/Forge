@@ -4,6 +4,8 @@
 *.d
 *.zip
 *.md
+!/docs/TEMPLATES.md
+!/docs/WALKTHROUGH.md
 /AGENTS.md
 /Scripts/acceptance.py
 __pycache__/

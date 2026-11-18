@@ -2,9 +2,11 @@
 
 **Forge** is a lightweight Swift CLI for scaffolding SwiftUI features in Xcode projects and Swift packages.
 
-It generates clean, testable architectural patterns with a single command—supporting standalone presentation styles, Clean Architecture layers, functional UI categories, and automated test scaffolds.
+It generates clean, testable architectural patterns with a single command—supporting standalone presentation styles, optional Clean Architecture layers, connected MVVM/MVI list and form workflows, and automated test scaffolds.
 
 ---
+
+For a complete example of generation, API wiring, tests, and template customization, see the [walkthrough](docs/WALKTHROUGH.md).
 
 ## ⚡️ Quick Start
 
@@ -63,7 +65,7 @@ Forge v2.0 removes the `-tca` option. Existing TCA users should continue with a 
 * **`--no-domain`**: Generates the **Data** layer while omitting the **Domain** layer (implies Clean Architecture).
 
 ### 3. UI Categories *(optional, pick one)*
-Customize generated Views and State handlers with functional UI logic instead of empty placeholders:
+Choose a UI starting point. MVVM/MVI include injectable async operations, visible loading/submission and error state, cancellation handling, and retry support. VIPER/VIP/MVP retain simpler scaffold hooks:
 
 * **`-form`**: Form layout with bound `TextField` inputs, keyboard-ready layout, and a `submit()` action. Bindings follow the configured state strategy.
 * **`-list`**: Dynamic `List` connected to a stable `Identifiable` item collection, with async lifecycle loading (`.task`).
@@ -75,6 +77,7 @@ Customize generated Views and State handlers with functional UI logic instead of
 * **`--target <name>`**: Target names must start with an ASCII letter or underscore and contain only ASCII letters, digits, underscores, or hyphens; Swift reserved names are rejected. The same rules apply to `paths.target`. For an existing Swift package, Forge verifies the target in `Package.swift`, routes files into `Sources/<Target>/<Feature>`, adds a test target when `--tests` is used, and adds Factory package and target dependencies when `di: factory` is selected. Manifest updates require literal target and dependency arrays and the standard `Sources/<Target>` layout; unsupported manifests fail before feature files are written.
 * **`--xcode-target <name>`**: Register generated Swift sources in an Xcode app target. With one `.xcodeproj` and one app target, Forge selects it automatically. For projects with multiple app targets, select one with `--xcode-target "My App"` or `paths.xcode_target`. Point `--path` at the directory containing the `.xcodeproj`.
 * **`--xcode-test-target <name>`**: With tests enabled, select an existing app-hosted Xcode unit-test target. Forge automatically selects a unique match when possible. Automatic test registration requires full Xcode and an app build configuration with testability enabled.
+* **`--dry-run`**: Preview resolved settings, output paths, and project/dependency changes without writing files or resolving dependencies. Xcode test module, host, and testability checks are deferred until generation.
 * **`--files-only`**: Generate files in the project root for manual wiring, including projects with unusual Xcode layouts. For automatic integration of app sources only, use `--no-tests`.
 * **`--tests`**: Automatically generates matching unit test suites (`XCTestCase`, UseCase mocks).
 * **`--no-tests`**: Skips test generation (overrides `.forge.yml`).
@@ -83,7 +86,7 @@ Customize generated Views and State handlers with functional UI logic instead of
 
 ## ⚙️ Project Configuration (`.forge.yml`)
 
-Commit a `.forge.yml` file to the root of your repository to establish and enforce team-wide conventions. When present, running `forge make <Feature>` automatically adopts your team's architecture, naming, paths, and flags without manual flags or terminal prompts.
+Commit a `.forge.yml` file to the root of your repository to establish generation defaults for your team. Forge does not lint or enforce conventions in existing code. When present, running `forge make <Feature>` automatically adopts your team's architecture, naming, paths, and flags without manual flags or terminal prompts.
 
 Generate a starter configuration with:
 
@@ -126,6 +129,18 @@ naming:
   strip_redundant_suffix: true  # Prevent 'LoginFeatureFeature' when suffix is 'Feature'
   strip_redundant_prefix: true  # Prevent 'AppAppLogin' when prefix is 'App'
 ```
+
+### Local template customization and previewing changes
+
+```sh
+forge templates list
+forge templates export mvvmListViewModel
+# Edit .forge/templates/mvvmListViewModel.stencil, then:
+forge make Feed -mvvm -list --dry-run
+forge make Feed -mvvm -list
+```
+
+Overrides live beside the selected configuration; all other templates keep their built-in defaults. Export refuses to overwrite existing templates. Commit `.forge/templates/contract-version` with your overrides. Unknown variables and malformed template syntax fail before feature files are written. See the [template contract and dry-run limitations](docs/TEMPLATES.md).
 
 ### State Binding Options (`binding`)
 * **`combine`** *(default)*: Generates reactive bindings using Apple's Combine framework (`ObservableObject`, `@Published`, `@StateObject`). Target platforms: iOS 15+, macOS 12+.
@@ -178,6 +193,8 @@ forge make Profile -mvvm -clean --package --tests --target FeatureKit
 swift test --package-path Profile
 ```
 
+A consuming app uses `import FeatureKit` and `ProfileFeature.makeView()`. The public factory returns `some View`; internal implementation types stay hidden. Customize the generated dependency container to supply your application services.
+
 Generated tests import `FeatureKit`, while feature types retain the `Profile` prefix. For an existing package, `--target` writes tests under `Tests/<Target>Tests/<Feature>` and adds a matching test target to a supported manifest when needed.
 
 For Xcode apps, Forge integrates generated tests with an existing app-hosted unit-test target and uses the app's resolved Swift module in `@testable import`. Run the tests using a scheme that already includes that unit-test target.
@@ -198,6 +215,14 @@ python3 Scripts/xcode-smoke.py --forge .build/debug/forge \
   --destination 'platform=iOS Simulator,id=<simulator-id>'
 ```
 
+### Connecting application behavior
+
+MVVM/MVI forms pass `field1` and `field2` into an injectable async submission operation; rename them and supply your business validation. Standalone lists accept an async item loader and initially return an empty collection. Clean list examples map one use-case response to one item; adapt the response/use case for a real collection API.
+
+Clean `RemoteDataSource` initializers accept fetch and submit closures. Their live defaults throw `URLError(.unsupportedURL)` until your API client is connected, rather than report fabricated success. Generated `NamePreview` helpers use explicit fixtures, bypass Factory globals, and never invoke the live container. Preview fixture constructors are for previews/tests only. MVVM/MVI category tests cover dependency invocation, retry, cancellation, and duplicate submission; domain-specific behavior still needs your tests.
+
+These changes affect newly generated files only. Existing generated features are not rewritten. VIPER, VIP, and MVP remain supported, with simpler form hooks documented as unfinished business behavior.
+
 ### Verifying generated code
 
 The repository tests check parsing, rendering, and file generation. The generated-code check additionally builds and runs the emitted XCTest suites, including SwiftUI previews:
@@ -213,7 +238,7 @@ A clean checkout supports `swift build` and `swift test` directly; `forge --vers
 
 Configuration supports single-line quoted YAML strings, doubled single quotes (`'O''Brien'`), and double-quoted YAML escapes (including Unicode escapes). Malformed escapes, unterminated quotes, and multiline quoted strings are rejected with line numbers.
 
-Run these checks on macOS with Swift 6.2 or newer and Python 3. The generated-code matrix covers MVVM, MVI, VIPER, VIP, and MVP across default/form/list views and standalone/Clean/no-domain layers (45 combinations). Every package uses a target name different from its feature name to verify module imports.
+Run these checks on macOS with Swift 6.2 or newer and Python 3. The generated-code matrix covers MVVM, MVI, VIPER, VIP, and MVP across default/form/list views and standalone/Clean/no-domain layers (45 combinations). Every package uses a target name different from its feature name to verify module imports. A separate consumer builds with an ordinary import and calls the public feature factory. CI also covers representative Observation + Swift Testing + Factory configurations.
 
 Before a release, run `make release-check VERSION=<version>` to test the release binary, user workflows, and generated-code matrices for default and advanced configurations. See [release instructions](docs/RELEASING.md).
 
