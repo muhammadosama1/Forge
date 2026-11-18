@@ -164,7 +164,9 @@ struct ProjectConfig: Equatable {
                 throw ForgeError.invalidArguments("Expected mapping for 'paths' in .forge.yml.")
             }
 
-            let allowedPathsKeys: Set<String> = ["root", "package", "target", "xcode_target", "xcode_test_target"]
+            let allowedPathsKeys: Set<String> = [
+                "root", "package", "target", "xcode_project", "features", "xcode_target", "xcode_test_target",
+            ]
             for key in pathsDict.keys {
                 guard allowedPathsKeys.contains(key) else {
                     throw ForgeError.invalidArguments("Unknown path setting '\(key)' under 'paths' in .forge.yml.")
@@ -214,7 +216,20 @@ struct ProjectConfig: Equatable {
                 xcodeTestTarget = name
             }
 
-            self.paths = PathsConfig(root: root, package: package, target: target, xcodeTarget: xcodeTarget, xcodeTestTarget: xcodeTestTarget)
+            func optionalPath(_ key: String) throws -> String? {
+                guard let value = pathsDict[key] else { return nil }
+                guard let path = value as? String,
+                      !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ForgeError.invalidArguments("Expected a non-empty path for 'paths.\(key)' in .forge.yml.")
+                }
+                return path
+            }
+
+            self.paths = PathsConfig(
+                root: root, package: package, target: target,
+                xcodeTarget: xcodeTarget, xcodeTestTarget: xcodeTestTarget,
+                xcodeProject: try optionalPath("xcode_project"), features: try optionalPath("features")
+            )
         } else {
             self.paths = PathsConfig()
         }
@@ -306,7 +321,9 @@ flags:
 #   root: Sources/Features  # Target directory relative to project root
 #   package: false          # Scaffold features as standalone Swift Packages
 #   target: FeatureKit      # Default target in existing multi-target packages
-#   xcode_target: "My App"   # Default Xcode app target; set root to the directory containing the .xcodeproj
+#   xcode_project: MyApp.xcodeproj # Xcode project path relative to .forge.yml
+#   features: Features      # Feature output directory relative to .forge.yml
+#   xcode_target: "My App"   # Default Xcode app target
 #   xcode_test_target: "My AppTests" # Existing app-hosted Xcode unit-test target, used with tests enabled
 
 # Team naming conventions
@@ -342,6 +359,10 @@ struct PathsConfig: Equatable {
     var xcodeTarget: String?
     /// Default unit-test target when generating tests for an Xcode app.
     var xcodeTestTarget: String?
+    /// Exact Xcode project bundle, independent of the feature directory.
+    var xcodeProject: String?
+    /// Output directory for features generated outside Swift packages.
+    var features: String?
 }
 
 /// Team naming conventions for types and folders.

@@ -4,7 +4,7 @@ import Foundation
 struct GenerationResult {
     /// Created/updated file paths, or planned paths when dryRun is enabled.
     let createdFiles: [URL]
-    /// An `.xcodeproj` found under the project root, if any.
+    /// Configured or discovered Xcode project, if any.
     let detectedXcodeProject: URL?
     /// If `--package` was used, the URL of the created Swift package directory.
     let createdSwiftPackage: URL?
@@ -16,8 +16,10 @@ struct GenerationResult {
 
 /// Orchestrates rendering and writing of feature files to disk.
 struct FeatureGenerator {
-    /// Root directory for the generated feature.
+    /// Project discovery directory and default output root.
     let projectPath: URL
+    let xcodeProject: URL?
+    let featureDirectory: URL?
     /// Whether to create a `Package.swift` alongside the feature.
     let shouldCreatePackage: Bool
     /// Optional explicit Swift package target name.
@@ -48,6 +50,8 @@ struct FeatureGenerator {
         packageTarget: String?,
         xcodeTarget: String? = nil,
         xcodeTestTarget: String? = nil,
+        xcodeProject: URL? = nil,
+        featureDirectory: URL? = nil,
         filesOnly: Bool = false,
         dryRun: Bool = false,
         shouldGenerateTests: Bool,
@@ -60,6 +64,8 @@ struct FeatureGenerator {
         templateDirectory: URL? = nil
     ) {
         self.projectPath = projectPath
+        self.xcodeProject = xcodeProject
+        self.featureDirectory = featureDirectory
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
         self.xcodeTarget = xcodeTarget
@@ -90,23 +96,35 @@ struct FeatureGenerator {
             try PackageTargetName.validate(packageTarget)
         }
 
-        // Inspect target directory for an existing .xcodeproj for contextual file headers
-        let xcodeProjects = findXcodeProjects(in: projectPath)
         let packageOutput = shouldCreatePackage || packageTarget != nil
+        let configuredProject = packageOutput || filesOnly ? nil : xcodeProject
+        let xcodeProjects: [URL]
+        if let configuredProject {
+            var isDirectory: ObjCBool = false
+            guard configuredProject.pathExtension == "xcodeproj",
+                  FileManager.default.fileExists(atPath: configuredProject.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw ForgeError.invalidArguments("The 'paths.xcode_project' setting must point to an existing .xcodeproj directory. Check '\(configuredProject.path)'.")
+            }
+            xcodeProjects = [configuredProject]
+        } else {
+            xcodeProjects = findXcodeProjects(in: projectPath)
+        }
         let integratesXcode = !filesOnly && (xcodeTarget != nil || xcodeTestTarget != nil || (!packageOutput && !xcodeProjects.isEmpty))
         if integratesXcode {
             try Self.validateXcodeOptions(package: packageOutput)
             guard !xcodeProjects.isEmpty else {
-                throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set --path or paths.root to the directory containing your Xcode project.")
+                throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set paths.xcode_project or point --path or paths.root at the directory containing your Xcode project.")
             }
             guard xcodeProjects.count == 1 else {
                 let names = xcodeProjects.map(\.lastPathComponent).joined(separator: ", ")
-                throw ForgeError.invalidArguments("Multiple Xcode projects found in '\(projectPath.path)': \(names). Set --path or paths.root to a directory containing one .xcodeproj.")
+                throw ForgeError.invalidArguments("Multiple Xcode projects found in '\(projectPath.path)': \(names). Select one with paths.xcode_project.")
             }
         }
         let xcodeProject    = xcodeProjects.first
         let headerContext   = FileHeaderContext(projectPath: projectPath, xcodeProject: xcodeProject)
-        let featureRoot     = projectPath.appendingPathComponent(feature.folderName, isDirectory: true)
+        let outputDirectory = packageOutput ? projectPath : featureDirectory ?? projectPath
+        let featureRoot     = outputDirectory.appendingPathComponent(feature.folderName, isDirectory: true)
         let targetName      = packageTarget ?? feature.typeName
         let testSpecs = shouldGenerateTests
             ? type.testTemplateSpecs.filter { !shouldSkipDomain || !$0.file.isDomainTest } : []
@@ -118,7 +136,7 @@ struct FeatureGenerator {
         } else if !shouldCreatePackage, packageTarget != nil {
             lockResource = projectPath.appendingPathComponent("Package.swift")
         } else {
-            lockResource = projectPath
+            lockResource = outputDirectory
         }
         let lock = try dryRun ? nil : GenerationLock.acquire(for: lockResource)
         defer { if let lock { GenerationLock.release(lock) } }
@@ -149,7 +167,9 @@ struct FeatureGenerator {
             let targetTestsDir = testsDir.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
             testsRoot = targetTestsDir.appendingPathComponent(feature.folderName, isDirectory: true)
         } else if let xcodeIntegration {
-            (sourcesRoot, testsRoot) = try xcodeIntegration.outputDirectories(featureRoot: featureRoot)
+            (sourcesRoot, testsRoot) = try xcodeIntegration.outputDirectories(
+                featureRoot: featureRoot, usesConfiguredFeatureDirectory: featureDirectory != nil
+            )
         } else {
             // Standard Xcode directory: places code under Feature/ and tests under Feature/Tests
             sourcesRoot = featureRoot

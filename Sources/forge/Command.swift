@@ -4,8 +4,10 @@ import Foundation
 struct Command {
     /// Raw feature name as provided on the command line.
     let featureName: String
-    /// Directory where the feature will be created.
+    /// Project discovery directory and default output root.
     let projectPath: URL
+    let xcodeProject: URL?
+    let featureDirectory: URL?
     /// Whether to emit a `Package.swift` manifest.
     let shouldCreatePackage: Bool
     /// Explicit Swift package target name, if `--target` was used.
@@ -40,6 +42,8 @@ struct Command {
         packageTarget: String?,
         xcodeTarget: String? = nil,
         xcodeTestTarget: String? = nil,
+        xcodeProject: URL? = nil,
+        featureDirectory: URL? = nil,
         filesOnly: Bool = false,
         dryRun: Bool = false,
         shouldSkipDomain: Bool,
@@ -54,6 +58,8 @@ struct Command {
     ) {
         self.featureName = featureName
         self.projectPath = projectPath
+        self.xcodeProject = xcodeProject
+        self.featureDirectory = featureDirectory
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
         self.xcodeTarget = xcodeTarget
@@ -184,7 +190,7 @@ struct Command {
       testing:       xctest, swift-testing
       di:            native, factory (Factory library)
       flags:         clean, no_domain, tests
-      paths:         root, package, target, xcode_target, xcode_test_target
+      paths:         root, package, target, xcode_project, features, xcode_target, xcode_test_target
       naming:        type_prefix, type_suffix, folder_prefix, folder_suffix
 
     CLEAN ARCHITECTURE:
@@ -359,15 +365,6 @@ struct Command {
         let loadedConfig = try ConfigLoader.load(explicitPath: explicitConfigPath, startingDirectory: startingDir)
         let config = loadedConfig?.config ?? ProjectConfig()
 
-        // Resolve destination project path: CLI --path > config paths.root > current directory
-        var projectPath = explicitProjectPath ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        if explicitProjectPath == nil, let root = config.paths.root, !root.isEmpty {
-            let base = loadedConfig?.fileURL.deletingLastPathComponent() ?? projectPath
-            projectPath = (root as NSString).isAbsolutePath
-                ? URL(fileURLWithPath: root, isDirectory: true)
-                : base.appendingPathComponent(root, isDirectory: true)
-        }
-
         // Resolve options: CLI flags override .forge.yml
         let packageRequested = cliCreatePackage == true || cliPackageTarget != nil
         if filesOnly && (packageRequested || cliXcodeTarget != nil) {
@@ -390,6 +387,21 @@ struct Command {
         if xcodeTarget != nil || xcodeTestTarget != nil {
             try FeatureGenerator.validateXcodeOptions(package: packageOutput)
         }
+
+        let configDirectory = loadedConfig?.fileURL.deletingLastPathComponent() ?? startingDir
+        func configuredPath(_ path: String) -> URL {
+            if (path as NSString).isAbsolutePath {
+                return URL(fileURLWithPath: path, isDirectory: true)
+            }
+            return configDirectory.appendingPathComponent(path, isDirectory: true)
+        }
+        let xcodeProject = packageOutput || filesOnly ? nil : config.paths.xcodeProject.map { configuredPath($0).standardizedFileURL }
+        let featureDirectory = packageOutput ? nil : config.paths.features.map { configuredPath($0).standardizedFileURL }
+        let configuredRoot = config.paths.root.flatMap { $0.isEmpty ? nil : configuredPath($0) }
+        let projectPath = explicitProjectPath ?? configuredRoot
+            ?? xcodeProject?.deletingLastPathComponent()
+            ?? (featureDirectory == nil ? startingDir : configDirectory)
+
         var useCleanLayers = cliCleanFlag ?? config.flags.clean
 
         // If user explicitly asks to skip domain files, Clean Architecture layers (Data) are implied
@@ -435,6 +447,8 @@ struct Command {
             packageTarget: packageTarget,
             xcodeTarget: xcodeTarget,
             xcodeTestTarget: xcodeTestTarget,
+            xcodeProject: xcodeProject,
+            featureDirectory: featureDirectory,
             filesOnly: filesOnly,
             dryRun: dryRun,
             shouldSkipDomain: shouldSkipDomain,
@@ -463,6 +477,8 @@ struct Command {
             packageTarget: packageTarget,
             xcodeTarget: xcodeTarget,
             xcodeTestTarget: xcodeTestTarget,
+            xcodeProject: xcodeProject,
+            featureDirectory: featureDirectory,
             filesOnly: filesOnly,
             dryRun: dryRun,
             shouldGenerateTests: shouldGenerateTests,
@@ -483,7 +499,7 @@ struct Command {
         }
         print("\(dryRun ? "Planned" : "Created") \(type.displayName) feature: \(feature.typeName)")
         if dryRun {
-            print("Output: \(projectPath.path); category: \(category?.rawValue ?? "default"); layers: \(shouldSkipDomain ? "data only" : (type.hasCleanLayers ? "clean" : "presentation"))")
+            print("Output: \((featureDirectory ?? projectPath).path); category: \(category?.rawValue ?? "default"); layers: \(shouldSkipDomain ? "data only" : (type.hasCleanLayers ? "clean" : "presentation"))")
             if let target = result.detectedSwiftPackageTarget { print("Package target: \(target)") }
             if let package = result.createdSwiftPackage { print("New package: \(package.path)") }
             print("Binding: \(binding.rawValue); tests: \(shouldGenerateTests ? testing.rawValue : "off"); DI: \(di.rawValue)")
@@ -497,6 +513,9 @@ struct Command {
         }
 
         if dryRun {
+            if let project = result.detectedXcodeProject, result.registeredXcodeTarget != nil {
+                print("Xcode project: \(project.path)")
+            }
             if let target = result.registeredXcodeTarget { print("App target: \(target)") }
             if let target = result.registeredXcodeTestTarget { print("Test target: \(target)") }
             print("Dry run complete. No files or dependencies were changed.")

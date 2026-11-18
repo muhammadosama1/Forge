@@ -66,6 +66,71 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: projectFile), project)
     }
 
+    func testConfiguredProjectAndFeaturePathsSelectOnlyIntendedTargets() throws {
+        try installUnitTestTarget()
+        let otherProject = root.appendingPathComponent("Other.xcodeproj")
+        try FileManager.default.copyItem(at: projectFile.deletingLastPathComponent(), to: otherProject)
+        let original = try Data(contentsOf: projectFile)
+        try writeRoutingConfig(project: "Demo.xcodeproj", features: "Sources/Features")
+        let nested = root.appendingPathComponent("Tools/Nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let args = ["make", "Login", "--tests", "--path", nested.path]
+
+        try Command.parse(arguments: args + ["--dry-run"]).run { _, _, _, _ in
+            XCTFail("A dry run should not resolve build settings")
+            return [:]
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Sources").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+
+        try Command.parse(arguments: args).run(readXcodeBuildSettings: buildSettings)
+        XCTAssertEqual(try registeredPaths().sorted(), expectedPaths("Login").map { "Sources/Features/\($0)" }.sorted())
+        XCTAssertEqual(try registeredPaths(phase: "A00000000000000000000009"),
+                       ["Sources/Features/Login/Tests/LoginViewModelTests.swift"])
+        let tests = root.appendingPathComponent("Sources/Features/Login/Tests/LoginViewModelTests.swift")
+        XCTAssertTrue(try String(contentsOf: tests, encoding: .utf8).contains("@testable import CustomAppModule"))
+        XCTAssertEqual(try Data(contentsOf: otherProject.appendingPathComponent("project.pbxproj")), original)
+    }
+
+    func testMissingConfiguredProjectFailsWithoutFallingBackToDiscoveredProject() throws {
+        let original = try Data(contentsOf: projectFile)
+        try writeRoutingConfig(project: "Missing.xcodeproj", features: "Features")
+        let args = ["make", "Login", "--path", root.path]
+        XCTAssertThrowsError(try Command.parse(arguments: args).run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("paths.xcode_project") == true)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Features").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+
+        try Command.parse(arguments: args + ["--files-only"]).run()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("Features/Login/Presentation/LoginView.swift").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testSwiftPackageOutputIgnoresConfiguredXcodePaths() throws {
+        try writeRoutingConfig(project: "Missing.xcodeproj", features: "Features")
+        try Command.parse(arguments: ["make", "Login", "--path", root.path, "--package"]).run()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("Login/Package.swift").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Features").path))
+    }
+
+    func testConfiguredFeatureDirectoryOutsideSelectedProjectIsRejected() throws {
+        let appDirectory = root.appendingPathComponent("App")
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let project = appDirectory.appendingPathComponent("Demo.xcodeproj")
+        try FileManager.default.moveItem(at: projectFile.deletingLastPathComponent(), to: project)
+        projectFile = project.appendingPathComponent("project.pbxproj")
+        let original = try Data(contentsOf: projectFile)
+        try writeRoutingConfig(project: "App/Demo.xcodeproj", features: "Features")
+
+        let command = try Command.parse(arguments: ["make", "Login", "--path", root.path])
+        XCTAssertThrowsError(try command.run()) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("inside the project directory") == true)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Features").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
     func testAddsFactoryToSelectedAppAndReusesItForAnotherFeature() throws {
         try configureFactory()
         for feature in ["Login", "Profile"] {
@@ -625,6 +690,16 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         try "paths:\n  xcode_target: \"\(target)\"\n".write(
             to: root.appendingPathComponent(".forge.yml"), atomically: true, encoding: .utf8
         )
+    }
+
+    private func writeRoutingConfig(project: String, features: String) throws {
+        try """
+        architecture: mvvm
+        paths:
+          xcode_project: "\(project)"
+          features: "\(features)"
+          xcode_target: "Demo App"
+        """.write(to: root.appendingPathComponent(".forge.yml"), atomically: true, encoding: .utf8)
     }
 
     private func buildSettings(_ project: URL, _ target: String, _ configuration: String, _ sdk: String?) throws -> [String: String] {
