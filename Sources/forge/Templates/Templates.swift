@@ -41,13 +41,13 @@ enum Templates {
     }
 
     /// Renders the standard file-header comment block with project/author/date metadata.
-    static func fileHeader(fileName: String, context: FileHeaderContext) throws -> String {
+    static func fileHeader(fileName: String, context: FileHeaderContext, overrides: URL? = nil) throws -> String {
         let ctx: [String: Any] = [
             "fileName":    fileName,
             "projectName": context.projectName,
             "authorName":  context.authorName,
             "createdDate": context.createdDate,
         ]
-        return try TemplateRenderer.render("fileHeader.stencil", context: ctx)
+        return try TemplateRenderer.render("fileHeader.stencil", context: ctx, overrides: overrides)
     }
 }

@@ -2,6 +2,7 @@
 enum TestTemplateContent {
     static let files: [String: String] = [
         "viewModelTests.stencil": """
+{% if isForm %}
 {% if isSwiftTesting %}
 import Foundation
 import Testing
@@ -9,9 +10,219 @@ import Testing
 
 @Suite struct {{ name }}ViewModelTests {
     @Test @MainActor
+    func liveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @Test @MainActor
+    func SubmissionPassesFieldsAndCanRetry() async {
+        var calls = 0
+        var received: [String] = []
+        let sut = {{ name }}ViewModel(submitAction: { first, second in
+            calls += 1
+            received = [first, second]
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+        })
+        sut.field1 = "First"
+        sut.field2 = "Second"
+        await sut.submit()
+        #expect(sut.errorMessage != nil)
+        await sut.submit()
+        #expect(sut.didSubmit && sut.errorMessage == nil)
+        {% if isSwiftTesting %}#expect(received == ["First", "Second"] && calls == 2){% else %}XCTAssertTrue(received == ["First", "Second"] && calls == 2){% endif %}
+        #expect(!sut.isSubmitting)
+    }
+    @Test @MainActor
+    func CancellationIsNotFailure() async {
+        let sut = {{ name }}ViewModel(submitAction: { _, _ in throw CancellationError() })
+        await sut.submit()
+        #expect(sut.errorMessage == nil && !sut.didSubmit && !sut.isSubmitting)
+    }
+    @Test @MainActor
+    func DuplicateSubmissionIsIgnored() async {
+        var calls = 0
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}ViewModel(submitAction: { _, _ in
+            calls += 1
+            await withCheckedContinuation { resume = $0 }
+        })
+        let first = Task { await sut.submit() }
+        while resume == nil { await Task.yield() }
+        await sut.submit()
+        #expect(calls == 1)
+        resume?.resume()
+        await first.value
+        #expect(sut.didSubmit && !sut.isSubmitting)
+    }
+}
+{% else %}
+import Foundation
+import XCTest
+@testable import {{ moduleName }}
+
+final class {{ name }}ViewModelTests: XCTestCase {
+    @MainActor
+    func testLiveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @MainActor
+    func testSubmissionPassesFieldsAndCanRetry() async {
+        var calls = 0
+        var received: [String] = []
+        let sut = {{ name }}ViewModel(submitAction: { first, second in
+            calls += 1
+            received = [first, second]
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+        })
+        sut.field1 = "First"
+        sut.field2 = "Second"
+        await sut.submit()
+        XCTAssertTrue(sut.errorMessage != nil)
+        await sut.submit()
+        XCTAssertTrue(sut.didSubmit && sut.errorMessage == nil)
+        {% if isSwiftTesting %}#expect(received == ["First", "Second"] && calls == 2){% else %}XCTAssertTrue(received == ["First", "Second"] && calls == 2){% endif %}
+        XCTAssertTrue(!sut.isSubmitting)
+    }
+    @MainActor
+    func testCancellationIsNotFailure() async {
+        let sut = {{ name }}ViewModel(submitAction: { _, _ in throw CancellationError() })
+        await sut.submit()
+        XCTAssertTrue(sut.errorMessage == nil && !sut.didSubmit && !sut.isSubmitting)
+    }
+    @MainActor
+    func testDuplicateSubmissionIsIgnored() async {
+        var calls = 0
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}ViewModel(submitAction: { _, _ in
+            calls += 1
+            await withCheckedContinuation { resume = $0 }
+        })
+        let first = Task { await sut.submit() }
+        while resume == nil { await Task.yield() }
+        await sut.submit()
+        XCTAssertTrue(calls == 1)
+        resume?.resume()
+        await first.value
+        XCTAssertTrue(sut.didSubmit && !sut.isSubmitting)
+    }
+}
+{% endif %}
+{% else %}
+{% if isList %}
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}ViewModelTests {
+    @Test @MainActor
+    func liveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @Test @MainActor
+    func LoadFailureThenRetryPreservesIdentity() async {
+        let id = UUID()
+        var calls = 0
+        let sut = {{ name }}ViewModel(loadItems: {
+            calls += 1
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+            return [{{ name }}Item(id: id, title: "Loaded")]
+        })
+        await sut.load()
+        #expect(sut.errorMessage != nil && !sut.isLoading)
+        await sut.load()
+        #expect(sut.items.first?.id == id && calls == 2)
+        #expect(sut.errorMessage == nil && !sut.isLoading)
+    }
+    @Test @MainActor
+    func CancellationIsNotFailure() async {
+        let sut = {{ name }}ViewModel(loadItems: { throw CancellationError() })
+        await sut.load()
+        #expect(sut.errorMessage == nil && !sut.isLoading && sut.items.isEmpty)
+    }
+    @Test @MainActor
+    func CancelledTaskDoesNotPublishLateResults() async {
+        let id = UUID()
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}ViewModel(loadItems: {
+            await withCheckedContinuation { resume = $0 }
+            return [{{ name }}Item(id: id, title: "Loaded")]
+        })
+        let request = Task { await sut.load() }
+        while resume == nil { await Task.yield() }
+        request.cancel()
+        resume?.resume()
+        await request.value
+        #expect(sut.items.isEmpty && sut.errorMessage == nil && !sut.isLoading)
+    }
+}
+{% else %}
+import Foundation
+import XCTest
+@testable import {{ moduleName }}
+
+final class {{ name }}ViewModelTests: XCTestCase {
+    @MainActor
+    func testLiveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @MainActor
+    func testLoadFailureThenRetryPreservesIdentity() async {
+        let id = UUID()
+        var calls = 0
+        let sut = {{ name }}ViewModel(loadItems: {
+            calls += 1
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+            return [{{ name }}Item(id: id, title: "Loaded")]
+        })
+        await sut.load()
+        XCTAssertTrue(sut.errorMessage != nil && !sut.isLoading)
+        await sut.load()
+        XCTAssertTrue(sut.items.first?.id == id && calls == 2)
+        XCTAssertTrue(sut.errorMessage == nil && !sut.isLoading)
+    }
+    @MainActor
+    func testCancellationIsNotFailure() async {
+        let sut = {{ name }}ViewModel(loadItems: { throw CancellationError() })
+        await sut.load()
+        XCTAssertTrue(sut.errorMessage == nil && !sut.isLoading && sut.items.isEmpty)
+    }
+    @MainActor
+    func testCancelledTaskDoesNotPublishLateResults() async {
+        let id = UUID()
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}ViewModel(loadItems: {
+            await withCheckedContinuation { resume = $0 }
+            return [{{ name }}Item(id: id, title: "Loaded")]
+        })
+        let request = Task { await sut.load() }
+        while resume == nil { await Task.yield() }
+        request.cancel()
+        resume?.resume()
+        await request.value
+        XCTAssertTrue(sut.items.isEmpty && sut.errorMessage == nil && !sut.isLoading)
+    }
+}
+{% endif %}
+{% else %}
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}ViewModelTests {
+    @Test @MainActor
+    func liveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @Test @MainActor
 {% if isForm %}
     func formFieldsCanBeEdited() {
-        let sut = {{ name }}DependencyContainer.makeViewModel()
+        let sut = {{ name }}Preview.makeViewModel()
 
         sut.field1 = "First value"
         sut.field2 = "Second value"
@@ -22,12 +233,12 @@ import Testing
 {% else %}
 {% if isList %}
     func listStartsEmpty() {
-        let sut = {{ name }}DependencyContainer.makeViewModel()
+        let sut = {{ name }}Preview.makeViewModel()
         #expect(sut.items.isEmpty)
     }
 {% else %}
-    func loadFinishesWithoutAnError() async {
-        let sut = {{ name }}DependencyContainer.makeViewModel()
+    func loadFinishesWithoutAnError() async throws {
+        let sut = {{ name }}Preview.makeViewModel()
 {% if isClean %}
 {% if hasNoDomain %}
         #expect(sut.response == nil)
@@ -59,9 +270,14 @@ import XCTest
 
 final class {{ name }}ViewModelTests: XCTestCase {
     @MainActor
+    func testLiveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @MainActor
 {% if isForm %}
     func testFormFieldsCanBeEdited() {
-        let sut = {{ name }}DependencyContainer.makeViewModel()
+        let sut = {{ name }}Preview.makeViewModel()
 
         sut.field1 = "First value"
         sut.field2 = "Second value"
@@ -72,12 +288,12 @@ final class {{ name }}ViewModelTests: XCTestCase {
 {% else %}
 {% if isList %}
     func testListStartsEmpty() {
-        let sut = {{ name }}DependencyContainer.makeViewModel()
+        let sut = {{ name }}Preview.makeViewModel()
         XCTAssertTrue(sut.items.isEmpty)
     }
 {% else %}
-    func testLoadFinishesWithoutAnError() async {
-        let sut = {{ name }}DependencyContainer.makeViewModel()
+    func testLoadFinishesWithoutAnError() async throws {
+        let sut = {{ name }}Preview.makeViewModel()
 {% if isClean %}
 {% if hasNoDomain %}
         XCTAssertNil(sut.response)
@@ -105,9 +321,12 @@ final class {{ name }}ViewModelTests: XCTestCase {
 }
 {% endif %}
 
+{% endif %}
+{% endif %}
 """,
 
         "storeTests.stencil": """
+{% if isForm %}
 {% if isSwiftTesting %}
 import Foundation
 import Testing
@@ -115,9 +334,219 @@ import Testing
 
 @Suite struct {{ name }}StoreTests {
     @Test @MainActor
+    func liveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @Test @MainActor
+    func SubmissionPassesFieldsAndCanRetry() async {
+        var calls = 0
+        var received: [String] = []
+        let sut = {{ name }}Store({% if isClean %}loadValue: { throw URLError(.unsupportedURL) }, {% endif %}submitAction: { first, second in
+            calls += 1
+            received = [first, second]
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+        })
+        sut.updateField1("First")
+        sut.updateField2("Second")
+        await sut.send(.submit)
+        #expect(sut.state.errorMessage != nil)
+        await sut.send(.submit)
+        #expect(sut.state.didSubmit && sut.state.errorMessage == nil)
+        {% if isSwiftTesting %}#expect(received == ["First", "Second"] && calls == 2){% else %}XCTAssertTrue(received == ["First", "Second"] && calls == 2){% endif %}
+        #expect(!sut.state.isSubmitting)
+    }
+    @Test @MainActor
+    func CancellationIsNotFailure() async {
+        let sut = {{ name }}Store({% if isClean %}loadValue: { throw URLError(.unsupportedURL) }, {% endif %}submitAction: { _, _ in throw CancellationError() })
+        await sut.send(.submit)
+        #expect(sut.state.errorMessage == nil && !sut.state.didSubmit && !sut.state.isSubmitting)
+    }
+    @Test @MainActor
+    func DuplicateSubmissionIsIgnored() async {
+        var calls = 0
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}Store({% if isClean %}loadValue: { throw URLError(.unsupportedURL) }, {% endif %}submitAction: { _, _ in
+            calls += 1
+            await withCheckedContinuation { resume = $0 }
+        })
+        let first = Task { await sut.send(.submit) }
+        while resume == nil { await Task.yield() }
+        await sut.send(.submit)
+        #expect(calls == 1)
+        resume?.resume()
+        await first.value
+        #expect(sut.state.didSubmit && !sut.state.isSubmitting)
+    }
+}
+{% else %}
+import Foundation
+import XCTest
+@testable import {{ moduleName }}
+
+final class {{ name }}StoreTests: XCTestCase {
+    @MainActor
+    func testLiveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @MainActor
+    func testSubmissionPassesFieldsAndCanRetry() async {
+        var calls = 0
+        var received: [String] = []
+        let sut = {{ name }}Store({% if isClean %}loadValue: { throw URLError(.unsupportedURL) }, {% endif %}submitAction: { first, second in
+            calls += 1
+            received = [first, second]
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+        })
+        sut.updateField1("First")
+        sut.updateField2("Second")
+        await sut.send(.submit)
+        XCTAssertTrue(sut.state.errorMessage != nil)
+        await sut.send(.submit)
+        XCTAssertTrue(sut.state.didSubmit && sut.state.errorMessage == nil)
+        {% if isSwiftTesting %}#expect(received == ["First", "Second"] && calls == 2){% else %}XCTAssertTrue(received == ["First", "Second"] && calls == 2){% endif %}
+        XCTAssertTrue(!sut.state.isSubmitting)
+    }
+    @MainActor
+    func testCancellationIsNotFailure() async {
+        let sut = {{ name }}Store({% if isClean %}loadValue: { throw URLError(.unsupportedURL) }, {% endif %}submitAction: { _, _ in throw CancellationError() })
+        await sut.send(.submit)
+        XCTAssertTrue(sut.state.errorMessage == nil && !sut.state.didSubmit && !sut.state.isSubmitting)
+    }
+    @MainActor
+    func testDuplicateSubmissionIsIgnored() async {
+        var calls = 0
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}Store({% if isClean %}loadValue: { throw URLError(.unsupportedURL) }, {% endif %}submitAction: { _, _ in
+            calls += 1
+            await withCheckedContinuation { resume = $0 }
+        })
+        let first = Task { await sut.send(.submit) }
+        while resume == nil { await Task.yield() }
+        await sut.send(.submit)
+        XCTAssertTrue(calls == 1)
+        resume?.resume()
+        await first.value
+        XCTAssertTrue(sut.state.didSubmit && !sut.state.isSubmitting)
+    }
+}
+{% endif %}
+{% else %}
+{% if isList %}
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}StoreTests {
+    @Test @MainActor
+    func liveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @Test @MainActor
+    func LoadFailureThenRetryPreservesIdentity() async {
+        let id = UUID()
+        var calls = 0
+        let sut = {{ name }}Store(loadValue: {
+            calls += 1
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+            return {% if isClean %}{% if hasNoDomain %}{{ name }}Response{% else %}{{ name }}Entity{% endif %}(id: id, title: "Loaded"){% else %}[{{ name }}Item(id: id, title: "Loaded")]{% endif %}
+        })
+        await sut.send(.onAppear)
+        #expect(sut.state.errorMessage != nil && !sut.state.isLoading)
+        await sut.send(.onAppear)
+        #expect(sut.state.items.first?.id == id && calls == 2)
+        #expect(sut.state.errorMessage == nil && !sut.state.isLoading)
+    }
+    @Test @MainActor
+    func CancellationIsNotFailure() async {
+        let sut = {{ name }}Store(loadValue: { throw CancellationError() })
+        await sut.send(.onAppear)
+        #expect(sut.state.errorMessage == nil && !sut.state.isLoading && sut.state.items.isEmpty)
+    }
+    @Test @MainActor
+    func CancelledTaskDoesNotPublishLateResults() async {
+        let id = UUID()
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}Store(loadValue: {
+            await withCheckedContinuation { resume = $0 }
+            return {% if isClean %}{% if hasNoDomain %}{{ name }}Response{% else %}{{ name }}Entity{% endif %}(id: id, title: "Loaded"){% else %}[{{ name }}Item(id: id, title: "Loaded")]{% endif %}
+        })
+        let request = Task { await sut.send(.onAppear) }
+        while resume == nil { await Task.yield() }
+        request.cancel()
+        resume?.resume()
+        await request.value
+        #expect(sut.state.items.isEmpty && sut.state.errorMessage == nil && !sut.state.isLoading)
+    }
+}
+{% else %}
+import Foundation
+import XCTest
+@testable import {{ moduleName }}
+
+final class {{ name }}StoreTests: XCTestCase {
+    @MainActor
+    func testLiveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @MainActor
+    func testLoadFailureThenRetryPreservesIdentity() async {
+        let id = UUID()
+        var calls = 0
+        let sut = {{ name }}Store(loadValue: {
+            calls += 1
+            if calls == 1 { throw URLError(.notConnectedToInternet) }
+            return {% if isClean %}{% if hasNoDomain %}{{ name }}Response{% else %}{{ name }}Entity{% endif %}(id: id, title: "Loaded"){% else %}[{{ name }}Item(id: id, title: "Loaded")]{% endif %}
+        })
+        await sut.send(.onAppear)
+        XCTAssertTrue(sut.state.errorMessage != nil && !sut.state.isLoading)
+        await sut.send(.onAppear)
+        XCTAssertTrue(sut.state.items.first?.id == id && calls == 2)
+        XCTAssertTrue(sut.state.errorMessage == nil && !sut.state.isLoading)
+    }
+    @MainActor
+    func testCancellationIsNotFailure() async {
+        let sut = {{ name }}Store(loadValue: { throw CancellationError() })
+        await sut.send(.onAppear)
+        XCTAssertTrue(sut.state.errorMessage == nil && !sut.state.isLoading && sut.state.items.isEmpty)
+    }
+    @MainActor
+    func testCancelledTaskDoesNotPublishLateResults() async {
+        let id = UUID()
+        var resume: CheckedContinuation<Void, Never>?
+        let sut = {{ name }}Store(loadValue: {
+            await withCheckedContinuation { resume = $0 }
+            return {% if isClean %}{% if hasNoDomain %}{{ name }}Response{% else %}{{ name }}Entity{% endif %}(id: id, title: "Loaded"){% else %}[{{ name }}Item(id: id, title: "Loaded")]{% endif %}
+        })
+        let request = Task { await sut.send(.onAppear) }
+        while resume == nil { await Task.yield() }
+        request.cancel()
+        resume?.resume()
+        await request.value
+        XCTAssertTrue(sut.state.items.isEmpty && sut.state.errorMessage == nil && !sut.state.isLoading)
+    }
+}
+{% endif %}
+{% else %}
+{% if isSwiftTesting %}
+import Foundation
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}StoreTests {
+    @Test @MainActor
+    func liveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @Test @MainActor
 {% if isForm %}
     func fieldUpdatesReachState() {
-        let sut = {{ name }}DependencyContainer.makeStore()
+        let sut = {{ name }}Preview.makeStore()
 
         sut.updateField1("First value")
         sut.updateField2("Second value")
@@ -128,8 +557,8 @@ import Testing
 {% else %}
 {% if isList %}
 {% if isClean %}
-    func onAppearLoadsItems() async {
-        let sut = {{ name }}DependencyContainer.makeStore()
+    func onAppearLoadsItems() async throws {
+        let sut = {{ name }}Preview.makeStore()
         #expect(sut.state.items.isEmpty)
 
         await sut.send(.onAppear)
@@ -140,8 +569,8 @@ import Testing
         #expect(sut.state.errorMessage == nil)
     }
 {% else %}
-    func didLoadReplacesItems() async {
-        let sut = {{ name }}DependencyContainer.makeStore()
+    func didLoadReplacesItems() async throws {
+        let sut = {{ name }}Preview.makeStore()
         let item = {{ name }}Item(id: UUID(), title: "Loaded item")
 
         await sut.send(.didLoad([item]))
@@ -151,8 +580,8 @@ import Testing
     }
 {% endif %}
 {% else %}
-    func onAppearFinishesLoading() async {
-        let sut = {{ name }}DependencyContainer.makeStore()
+    func onAppearFinishesLoading() async throws {
+        let sut = {{ name }}Preview.makeStore()
 
         await sut.send(.onAppear)
 
@@ -176,9 +605,14 @@ import XCTest
 
 final class {{ name }}StoreTests: XCTestCase {
     @MainActor
+    func testLiveViewCanBeConstructed() {
+        _ = {{ name }}DependencyContainer.makeView()
+    }
+
+    @MainActor
 {% if isForm %}
     func testFieldUpdatesReachState() {
-        let sut = {{ name }}DependencyContainer.makeStore()
+        let sut = {{ name }}Preview.makeStore()
 
         sut.updateField1("First value")
         sut.updateField2("Second value")
@@ -189,8 +623,8 @@ final class {{ name }}StoreTests: XCTestCase {
 {% else %}
 {% if isList %}
 {% if isClean %}
-    func testOnAppearLoadsItems() async {
-        let sut = {{ name }}DependencyContainer.makeStore()
+    func testOnAppearLoadsItems() async throws {
+        let sut = {{ name }}Preview.makeStore()
         XCTAssertTrue(sut.state.items.isEmpty)
 
         await sut.send(.onAppear)
@@ -201,8 +635,8 @@ final class {{ name }}StoreTests: XCTestCase {
         XCTAssertNil(sut.state.errorMessage)
     }
 {% else %}
-    func testDidLoadReplacesItems() async {
-        let sut = {{ name }}DependencyContainer.makeStore()
+    func testDidLoadReplacesItems() async throws {
+        let sut = {{ name }}Preview.makeStore()
         let item = {{ name }}Item(id: UUID(), title: "Loaded item")
 
         await sut.send(.didLoad([item]))
@@ -212,8 +646,8 @@ final class {{ name }}StoreTests: XCTestCase {
     }
 {% endif %}
 {% else %}
-    func testOnAppearFinishesLoading() async {
-        let sut = {{ name }}DependencyContainer.makeStore()
+    func testOnAppearFinishesLoading() async throws {
+        let sut = {{ name }}Preview.makeStore()
 
         await sut.send(.onAppear)
 
@@ -233,6 +667,8 @@ final class {{ name }}StoreTests: XCTestCase {
 }
 {% endif %}
 
+{% endif %}
+{% endif %}
 """,
 
         "reducerTests.stencil": """
@@ -275,7 +711,11 @@ import Testing
         #expect(state.isLoading)
         #expect(state.errorMessage == nil)
 {% else %}
+{% if isList %}
+        #expect(state.isLoading)
+{% else %}
         #expect(!state.isLoading)
+{% endif %}
 {% if isList %}
 {% else %}
         #expect(state.errorMessage == nil)
@@ -377,7 +817,11 @@ final class {{ name }}ReducerTests: XCTestCase {
         XCTAssertTrue(state.isLoading)
         XCTAssertNil(state.errorMessage)
 {% else %}
+{% if isList %}
+        XCTAssertTrue(state.isLoading)
+{% else %}
         XCTAssertFalse(state.isLoading)
+{% endif %}
 {% if isList %}
 {% else %}
         XCTAssertNil(state.errorMessage)
@@ -455,7 +899,7 @@ import Testing
     @Test @MainActor
 {% if isVIP %}
     func presentMapsTitleToViewModel() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
 {% if isClean %}
 {% if hasNoDomain %}
         let response = {{ name }}Response(id: UUID(), title: "Presented title")
@@ -474,7 +918,7 @@ import Testing
 {% else %}
 {% if isForm %}
     func formFieldsCanBeEdited() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
 
         sut.field1 = "First value"
         sut.field2 = "Second value"
@@ -486,8 +930,8 @@ import Testing
 {% if isList %}
 {% if isMVP %}
 {% if isClean %}
-    func loadPopulatesItems() async {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+    func loadPopulatesItems() async throws {
+        let sut = {{ name }}Preview.makePresenter()
         #expect(sut.items.isEmpty)
 
         await sut.load()
@@ -497,28 +941,28 @@ import Testing
     }
 {% else %}
     func listStartsEmpty() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
         #expect(sut.items.isEmpty)
     }
 {% endif %}
 {% else %}
     func listStartsEmpty() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
         #expect(sut.items.isEmpty)
     }
 {% endif %}
 {% else %}
 {% if isMVP %}
 {% if isClean %}
-    func loadUsesRepositoryTitle() async {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+    func loadUsesRepositoryTitle() async throws {
+        let sut = {{ name }}Preview.makePresenter()
 
         await sut.load()
 
         #expect(sut.title == "{{ name }}")
     }
 {% else %}
-    func loadUsesModelTitle() async {
+    func loadUsesModelTitle() async throws {
         let sut = {{ name }}Presenter(model: {{ name }}Model(title: "Model title"))
 
         await sut.load()
@@ -527,8 +971,8 @@ import Testing
     }
 {% endif %}
 {% else %}
-    func viewDidLoadUsesInteractorTitle() async {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+    func viewDidLoadUsesInteractorTitle() async throws {
+        let sut = {{ name }}Preview.makePresenter()
 
         await sut.viewDidLoad()
 
@@ -547,7 +991,7 @@ final class {{ name }}PresenterTests: XCTestCase {
     @MainActor
 {% if isVIP %}
     func testPresentMapsTitleToViewModel() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
 {% if isClean %}
 {% if hasNoDomain %}
         let response = {{ name }}Response(id: UUID(), title: "Presented title")
@@ -566,7 +1010,7 @@ final class {{ name }}PresenterTests: XCTestCase {
 {% else %}
 {% if isForm %}
     func testFormFieldsCanBeEdited() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
 
         sut.field1 = "First value"
         sut.field2 = "Second value"
@@ -578,8 +1022,8 @@ final class {{ name }}PresenterTests: XCTestCase {
 {% if isList %}
 {% if isMVP %}
 {% if isClean %}
-    func testLoadPopulatesItems() async {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+    func testLoadPopulatesItems() async throws {
+        let sut = {{ name }}Preview.makePresenter()
         XCTAssertTrue(sut.items.isEmpty)
 
         await sut.load()
@@ -589,28 +1033,28 @@ final class {{ name }}PresenterTests: XCTestCase {
     }
 {% else %}
     func testListStartsEmpty() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
         XCTAssertTrue(sut.items.isEmpty)
     }
 {% endif %}
 {% else %}
     func testListStartsEmpty() {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+        let sut = {{ name }}Preview.makePresenter()
         XCTAssertTrue(sut.items.isEmpty)
     }
 {% endif %}
 {% else %}
 {% if isMVP %}
 {% if isClean %}
-    func testLoadUsesRepositoryTitle() async {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+    func testLoadUsesRepositoryTitle() async throws {
+        let sut = {{ name }}Preview.makePresenter()
 
         await sut.load()
 
         XCTAssertEqual(sut.title, "{{ name }}")
     }
 {% else %}
-    func testLoadUsesModelTitle() async {
+    func testLoadUsesModelTitle() async throws {
         let sut = {{ name }}Presenter(model: {{ name }}Model(title: "Model title"))
 
         await sut.load()
@@ -619,8 +1063,8 @@ final class {{ name }}PresenterTests: XCTestCase {
     }
 {% endif %}
 {% else %}
-    func testViewDidLoadUsesInteractorTitle() async {
-        let sut = {{ name }}DependencyContainer.makePresenter()
+    func testViewDidLoadUsesInteractorTitle() async throws {
+        let sut = {{ name }}Preview.makePresenter()
 
         await sut.viewDidLoad()
 
@@ -642,11 +1086,32 @@ import Testing
 @testable import {{ moduleName }}
 
 @Suite struct {{ name }}InteractorTests {
+{% if isVIPER %}
+{% if isClean %}
+    @Test @MainActor
+    func loadPropagatesFailure() async throws {
+        let source = {{ name }}RemoteDataSource(fetch: { throw URLError(.notConnectedToInternet) })
+        let repository = {{ name }}RepositoryImpl(remoteDataSource: source)
+{% if hasNoDomain %}
+        let sut = {{ name }}Interactor(repository: repository)
+{% else %}
+        let sut = {{ name }}Interactor(useCase: {{ name }}UseCase(repository: repository))
+{% endif %}
+        do {
+            _ = try await sut.load()
+            Issue.record("Expected loading failure")
+        } catch let error as URLError {
+            #expect(error.code == .notConnectedToInternet)
+        }
+    }
+{% endif %}
+{% endif %}
+
     @Test @MainActor
 {% if isVIP %}
 {% if isForm %}
     func formFieldsCanBeEdited() {
-        let sut = {{ name }}DependencyContainer.makeInteractor()
+        let sut = {{ name }}Preview.makeInteractor()
 
         sut.field1 = "First value"
         sut.field2 = "Second value"
@@ -655,8 +1120,8 @@ import Testing
         #expect(sut.field2 == "Second value")
     }
 {% else %}
-    func loadUpdatesViewModel() async {
-        let sut = {{ name }}DependencyContainer.makeInteractor()
+    func loadUpdatesViewModel() async throws {
+        let sut = {{ name }}Preview.makeInteractor()
 
         await sut.load()
 
@@ -668,10 +1133,10 @@ import Testing
     }
 {% endif %}
 {% else %}
-    func loadReturnsFeatureData() async {
-        let sut = {{ name }}DependencyContainer.makeInteractor()
+    func loadReturnsFeatureData() async throws {
+        let sut = {{ name }}Preview.makeInteractor()
 
-        let value = await sut.load()
+        let value = try await sut.load()
 
         #expect(value.title == "{{ name }}")
     }
@@ -682,11 +1147,32 @@ import XCTest
 @testable import {{ moduleName }}
 
 final class {{ name }}InteractorTests: XCTestCase {
+{% if isVIPER %}
+{% if isClean %}
+    @MainActor
+    func testLoadPropagatesFailure() async throws {
+        let source = {{ name }}RemoteDataSource(fetch: { throw URLError(.notConnectedToInternet) })
+        let repository = {{ name }}RepositoryImpl(remoteDataSource: source)
+{% if hasNoDomain %}
+        let sut = {{ name }}Interactor(repository: repository)
+{% else %}
+        let sut = {{ name }}Interactor(useCase: {{ name }}UseCase(repository: repository))
+{% endif %}
+        do {
+            _ = try await sut.load()
+            XCTFail("Expected loading failure")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .notConnectedToInternet)
+        }
+    }
+{% endif %}
+{% endif %}
+
     @MainActor
 {% if isVIP %}
 {% if isForm %}
     func testFormFieldsCanBeEdited() {
-        let sut = {{ name }}DependencyContainer.makeInteractor()
+        let sut = {{ name }}Preview.makeInteractor()
 
         sut.field1 = "First value"
         sut.field2 = "Second value"
@@ -695,8 +1181,8 @@ final class {{ name }}InteractorTests: XCTestCase {
         XCTAssertEqual(sut.field2, "Second value")
     }
 {% else %}
-    func testLoadUpdatesViewModel() async {
-        let sut = {{ name }}DependencyContainer.makeInteractor()
+    func testLoadUpdatesViewModel() async throws {
+        let sut = {{ name }}Preview.makeInteractor()
 
         await sut.load()
 
@@ -708,10 +1194,10 @@ final class {{ name }}InteractorTests: XCTestCase {
     }
 {% endif %}
 {% else %}
-    func testLoadReturnsFeatureData() async {
-        let sut = {{ name }}DependencyContainer.makeInteractor()
+    func testLoadReturnsFeatureData() async throws {
+        let sut = {{ name }}Preview.makeInteractor()
 
-        let value = await sut.load()
+        let value = try await sut.load()
 
         XCTAssertEqual(value.title, "{{ name }}")
     }
@@ -739,7 +1225,7 @@ import Testing
         #expect(repository.fetchCount == 1)
     }
 
-    @Test func executePropagatesRepositoryError() async {
+    @Test func executePropagatesRepositoryError() async throws {
         let repository = {{ name }}UseCaseRepositoryStub(result: .failure(.unavailable))
         let sut = {{ name }}UseCase(repository: repository)
 
@@ -783,7 +1269,7 @@ final class {{ name }}UseCaseTests: XCTestCase {
         XCTAssertEqual(repository.fetchCount, 1)
     }
 
-    func testExecutePropagatesRepositoryError() async {
+    func testExecutePropagatesRepositoryError() async throws {
         let repository = {{ name }}UseCaseRepositoryStub(result: .failure(.unavailable))
         let sut = {{ name }}UseCase(repository: repository)
 
@@ -825,8 +1311,19 @@ import Testing
 @testable import {{ moduleName }}
 
 @Suite struct {{ name }}RepositoryTests {
+    @Test func fetchPropagatesFailure() async throws {
+        let source = {{ name }}RemoteDataSource(fetch: { throw URLError(.notConnectedToInternet) })
+        let sut = {{ name }}RepositoryImpl(remoteDataSource: source)
+        do {
+            _ = try await sut.fetch{{ name }}()
+            Issue.record("Expected loading failure")
+        } catch let error as URLError {
+            #expect(error.code == .notConnectedToInternet)
+        }
+    }
+
     @Test func fetchReturnsDataSourceTitle() async throws {
-        let dataSource = {{ name }}RemoteDataSource()
+        let dataSource = {{ name }}RemoteDataSource.preview
         let sut = {{ name }}RepositoryImpl(remoteDataSource: dataSource)
 
         let value = try await sut.fetch{{ name }}()
@@ -839,8 +1336,19 @@ import XCTest
 @testable import {{ moduleName }}
 
 final class {{ name }}RepositoryTests: XCTestCase {
+    func testFetchPropagatesFailure() async throws {
+        let source = {{ name }}RemoteDataSource(fetch: { throw URLError(.notConnectedToInternet) })
+        let sut = {{ name }}RepositoryImpl(remoteDataSource: source)
+        do {
+            _ = try await sut.fetch{{ name }}()
+            XCTFail("Expected loading failure")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .notConnectedToInternet)
+        }
+    }
+
     func testFetchReturnsDataSourceTitle() async throws {
-        let dataSource = {{ name }}RemoteDataSource()
+        let dataSource = {{ name }}RemoteDataSource.preview
         let sut = {{ name }}RepositoryImpl(remoteDataSource: dataSource)
 
         let value = try await sut.fetch{{ name }}()

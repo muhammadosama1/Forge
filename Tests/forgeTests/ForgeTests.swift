@@ -1671,12 +1671,12 @@ final class BestPracticesTests: XCTestCase {
 
     // MARK: - Test Template Best Practices
 
-    /// ViewModel tests use the same dependency wiring as generated views.
-    func testViewModelTestUsesDependencyContainer() throws {
+    /// Default ViewModel tests use explicit fixtures rather than live application dependencies.
+    func testViewModelTestUsesIsolatedFixtures() throws {
         let result = try TemplateRenderer.render("viewModelTests.stencil", context: [
             "name": "Login", "hasUseCase": false
         ])
-        XCTAssertTrue(result.contains("LoginDependencyContainer.makeViewModel()"),
+        XCTAssertTrue(result.contains("LoginPreview.makeViewModel()"),
             "Tests must construct the selected variant with its required dependencies.")
     }
 
@@ -1689,11 +1689,11 @@ final class BestPracticesTests: XCTestCase {
             "Mock must conform to the LoginRepository protocol, not subclass the impl.")
     }
 
-    /// Repository test must test integration with RemoteDataSource (not mock it out).
-    func testRepositoryTestUsesRealDataSource() throws {
+    /// Repository tests exercise the real data-source type with an explicit fixture.
+    func testRepositoryTestUsesExplicitFixture() throws {
         let result = try TemplateRenderer.render("repositoryTests.stencil", context: ["name": "Login"])
-        XCTAssertTrue(result.contains("LoginRemoteDataSource()"),
-            "RepositoryTests are integration tests — they use the real RemoteDataSource.")
+        XCTAssertTrue(result.contains("LoginRemoteDataSource.preview"),
+            "Repository tests use an explicit fixture, not a live API.")
         XCTAssertTrue(result.contains("LoginRepositoryImpl(remoteDataSource:"),
             "RepositoryTests instantiate the real Impl to test layer integration.")
     }
