@@ -114,9 +114,10 @@ struct XcodeProjectIntegration {
         return sourcePrefix + path.dropFirst(projectPrefix.count)
     }
 
-    func outputDirectories(featureRoot: URL) throws -> (sources: URL, tests: URL) {
+    func outputDirectories(featureRoot: URL, usesConfiguredFeatureDirectory: Bool) throws -> (sources: URL, tests: URL) {
         let feature = featureRoot.lastPathComponent
-        let sources = try synchronizedDirectory(for: app, feature: feature) ?? featureRoot
+        let sources = try usesConfiguredFeatureDirectory
+            ? featureRoot : synchronizedDirectory(for: app, feature: feature) ?? featureRoot
         let testDirectory = try tests.flatMap { try synchronizedDirectory(for: $0, feature: feature) }
         return (sources, testDirectory ?? featureRoot.appendingPathComponent("Tests", isDirectory: true))
     }

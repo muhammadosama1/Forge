@@ -75,10 +75,10 @@ Choose a UI starting point. MVVM/MVI include injectable async operations, visibl
 * **`--config <path>`**: Path to a specific `.forge.yml` configuration file.
 * **`--package`**: Scaffolds the feature as an independent Swift Package with its own `Package.swift`.
 * **`--target <name>`**: Target names must start with an ASCII letter or underscore and contain only ASCII letters, digits, underscores, or hyphens; Swift reserved names are rejected. The same rules apply to `paths.target`. For an existing Swift package, Forge verifies the target in `Package.swift`, routes files into `Sources/<Target>/<Feature>`, adds a test target when `--tests` is used, and adds Factory package and target dependencies when `di: factory` is selected. Manifest updates require literal target and dependency arrays and the standard `Sources/<Target>` layout; unsupported manifests fail before feature files are written.
-* **`--xcode-target <name>`**: Register generated Swift sources in an Xcode app target. With one `.xcodeproj` and one app target, Forge selects it automatically. For projects with multiple app targets, select one with `--xcode-target "My App"` or `paths.xcode_target`. Point `--path` at the directory containing the `.xcodeproj`.
+* **`--xcode-target <name>`**: Register generated Swift sources in an Xcode app target. With one `.xcodeproj` and one app target, Forge selects it automatically. For projects with multiple app targets, select one with `--xcode-target "My App"` or `paths.xcode_target`. Choose the project with `paths.xcode_project` or point `--path` at the directory containing the `.xcodeproj`.
 * **`--xcode-test-target <name>`**: With tests enabled, select an existing app-hosted Xcode unit-test target. Forge automatically selects a unique match when possible. Automatic test registration requires full Xcode and an app build configuration with testability enabled.
 * **`--dry-run`**: Preview resolved settings, output paths, and project/dependency changes without writing files or resolving dependencies. Xcode test module, host, and testability checks are deferred until generation.
-* **`--files-only`**: Generate files in the project root for manual wiring, including projects with unusual Xcode layouts. For automatic integration of app sources only, use `--no-tests`.
+* **`--files-only`**: Generate files under `paths.features` or the default output root for manual wiring, including projects with unusual Xcode layouts. For automatic integration of app sources only, use `--no-tests`.
 * **`--tests`**: Automatically generates matching unit test suites (`XCTestCase`, UseCase mocks).
 * **`--no-tests`**: Skips test generation (overrides `.forge.yml`).
 
@@ -118,6 +118,8 @@ flags:
 #   root: Sources/Features  # Output directory relative to repo root; use the package root with target
 #   package: false          # Scaffold as independent Swift Packages
 #   target: FeatureKit      # Default target in multi-target packages
+#   xcode_project: MyApp.xcodeproj # Select the exact project independently of the output directory
+#   features: Features      # Put generated features in this directory
 #   xcode_target: "My App"   # Default Xcode app target
 #   xcode_test_target: "My AppTests" # Default Xcode unit-test target when tests are enabled
 
@@ -158,9 +160,25 @@ If you generate Xcode tests before Xcode has resolved the newly added Factory de
 
 When `paths.target` is set for an existing package, `paths.root` must point to that package's root, where `Package.swift` lives.
 
-Set `paths.xcode_target` to register generated sources with an Xcode app target by default. If you set `paths.root`, point it at the directory containing the `.xcodeproj`. Use `--xcode-target` to select another app target for one command. Explicit `--package` or `--target` selects Swift package output instead of the Xcode default.
+Set `paths.xcode_target` to choose the default app target. Use `--xcode-target` to select another app target for one command.
 
-CLI flags always take precedence over `.forge.yml`, allowing developers to override standards on demand (e.g. `forge make SpecialScreen -viper --no-tests`, `forge make Profile --no-clean`, or `forge make Settings --domain`).
+CLI flags can override the matching defaults in `.forge.yml` (e.g. `forge make SpecialScreen -viper --no-tests`, `forge make Profile --no-clean`, or `forge make Settings --domain`).
+
+### Xcode project and feature destination
+
+```yaml
+architecture: mvvm
+paths:
+  xcode_project: Apps/Store/Store.xcodeproj
+  features: Apps/Store/Features
+  xcode_target: Store App
+```
+
+Run `forge make Login --dry-run` from the repo root or a nested directory to preview the selected project, targets, and output paths. Relative paths resolve from the directory containing `.forge.yml`. This example generates into `Apps/Store/Features/Login` and registers the files with `Store App`.
+
+`--path` starts configuration discovery and overrides `paths.root`. If `paths.xcode_project` or `paths.features` is set, that setting still controls project selection or feature placement, respectively. When only `paths.features` is set and neither `--path` nor `paths.root` is supplied, Forge looks for a single Xcode project beside the configuration. When only `paths.xcode_project` is set, the project's containing directory is the default output root. Swift package output uses its existing paths.
+
+For automatic Xcode integration, the output must be within the directory containing the selected project. Forge uses Xcode's automatic membership when the configured destination is inside a synchronized folder belonging to the app target. Tests go in the test target's dedicated synchronized folder when present, or in the feature's `Tests` folder when it can be registered safely. For manual integration, use `--files-only`.
 
 ---
 

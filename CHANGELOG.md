@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Independently configure the Xcode project and feature output directory with `paths.xcode_project` and `paths.features`.
 - Side-effect-free `forge make --dry-run`, with explicit deferral of Xcode test build-setting validation.
 - `forge templates list/export` and local per-template overrides under `.forge/templates`, with contract v1 and strict syntax/context validation.
 - Public opaque feature factories for generated package consumers, isolated preview fixtures, and consumer-module verification.
