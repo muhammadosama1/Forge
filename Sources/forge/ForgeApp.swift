@@ -23,6 +23,10 @@ struct Forge {
         }
 
         do {
+            if args.first == "templates" {
+                try TemplateCatalog.run(arguments: args)
+                return
+            }
             // Scaffold project configuration standard
             if args.first == "init" {
                 try Command.runInit(arguments: args)

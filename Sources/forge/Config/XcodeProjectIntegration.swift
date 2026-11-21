@@ -114,9 +114,10 @@ struct XcodeProjectIntegration {
         return sourcePrefix + path.dropFirst(projectPrefix.count)
     }
 
-    func outputDirectories(featureRoot: URL) throws -> (sources: URL, tests: URL) {
+    func outputDirectories(featureRoot: URL, usesConfiguredFeatureDirectory: Bool) throws -> (sources: URL, tests: URL) {
         let feature = featureRoot.lastPathComponent
-        let sources = try synchronizedDirectory(for: app, feature: feature) ?? featureRoot
+        let sources = try usesConfiguredFeatureDirectory
+            ? featureRoot : synchronizedDirectory(for: app, feature: feature) ?? featureRoot
         let testDirectory = try tests.flatMap { try synchronizedDirectory(for: $0, feature: feature) }
         return (sources, testDirectory ?? featureRoot.appendingPathComponent("Tests", isDirectory: true))
     }
@@ -130,7 +131,7 @@ struct XcodeProjectIntegration {
         return folders.first.map { URL(fileURLWithPath: $0.logicalPath, isDirectory: true).appendingPathComponent(feature, isDirectory: true) }
     }
 
-    func plan(files: [URL], testFiles: [URL], factory: Bool, readBuildSettings: BuildSettingsReader) throws -> Update {
+    func plan(files: [URL], testFiles: [URL], factory: Bool, readBuildSettings: BuildSettingsReader, resolveBuildSettings: Bool = true) throws -> Update {
         guard let sources = try app.sourcesBuildPhase() else {
             throw ForgeError.invalidArguments("Xcode app target '\(app.name)' has no Sources build phase. Add a Compile Sources phase in Xcode or select a different target.")
         }
@@ -176,9 +177,9 @@ struct XcodeProjectIntegration {
             membership.phase.files = (membership.phase.files ?? []) + [buildFile]
         }
 
-        let moduleName = try tests.map {
+        let moduleName = try resolveBuildSettings ? tests.map {
             try Self.testModuleName(in: project, root: root, app: app, tests: $0, readBuildSettings: readBuildSettings)
-        }
+        } : nil
         var updated: Data?
         if changed {
             guard let data = try graph.dataRepresentation() else {

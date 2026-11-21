@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   generated-packages:
-    name: Generated ${{ matrix.architecture }} packages
+    name: Generated ${{ matrix.architecture }} (${{ matrix.profile }}) packages
     runs-on: macos-15
     timeout-minutes: 30
     strategy:
@@ -19,6 +19,12 @@ jobs:
       max-parallel: 5
       matrix:
         architecture: [mvvm, mvi, viper, vip, mvp]
+        profile: [default]
+        include:
+          - architecture: mvvm
+            profile: advanced
+          - architecture: mvi
+            profile: advanced
     env:
       # Xcode 26.2 includes Swift 6.2 and is installed on macos-15 runners.
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
@@ -39,7 +45,13 @@ jobs:
             exit 1
           fi
       - name: Build generated packages and run their tests
-        run: python3 Scripts/verify-generated.py --architecture "${{ matrix.architecture }}" --jobs 4
+        shell: bash
+        run: |
+          options=()
+          if [[ "${{ matrix.profile }}" == "advanced" ]]; then
+            options+=(--binding concurrency --testing swift-testing --di factory)
+          fi
+          python3 Scripts/verify-generated.py --architecture "${{ matrix.architecture }}" --jobs 4 "${options[@]}"
 
   xcode-smoke:
     name: Generated Xcode app and tests

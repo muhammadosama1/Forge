@@ -2,9 +2,9 @@ import Foundation
 
 /// Outcome of a feature generation run.
 struct GenerationResult {
-    /// Absolute paths of every file that was written to disk.
+    /// Created/updated file paths, or planned paths when dryRun is enabled.
     let createdFiles: [URL]
-    /// An `.xcodeproj` found under the project root, if any.
+    /// Configured or discovered Xcode project, if any.
     let detectedXcodeProject: URL?
     /// If `--package` was used, the URL of the created Swift package directory.
     let createdSwiftPackage: URL?
@@ -16,8 +16,10 @@ struct GenerationResult {
 
 /// Orchestrates rendering and writing of feature files to disk.
 struct FeatureGenerator {
-    /// Root directory for the generated feature.
+    /// Project discovery directory and default output root.
     let projectPath: URL
+    let xcodeProject: URL?
+    let featureDirectory: URL?
     /// Whether to create a `Package.swift` alongside the feature.
     let shouldCreatePackage: Bool
     /// Optional explicit Swift package target name.
@@ -25,6 +27,8 @@ struct FeatureGenerator {
     let xcodeTarget: String?
     let xcodeTestTarget: String?
     let filesOnly: Bool
+    let dryRun: Bool
+    let templateDirectory: URL?
     /// Whether to generate test files.
     let shouldGenerateTests: Bool
     /// When `true`, Domain layer files (Entity, UseCase, Repository protocol) are skipped.
@@ -46,21 +50,29 @@ struct FeatureGenerator {
         packageTarget: String?,
         xcodeTarget: String? = nil,
         xcodeTestTarget: String? = nil,
+        xcodeProject: URL? = nil,
+        featureDirectory: URL? = nil,
         filesOnly: Bool = false,
+        dryRun: Bool = false,
         shouldGenerateTests: Bool,
         shouldSkipDomain: Bool,
         type: FeatureType,
         category: FeatureCategory?,
         binding: BindingStrategy = .combine,
         testing: TestFramework = .xctest,
-        di: DependencyInjectionStrategy = .native
+        di: DependencyInjectionStrategy = .native,
+        templateDirectory: URL? = nil
     ) {
         self.projectPath = projectPath
+        self.xcodeProject = xcodeProject
+        self.featureDirectory = featureDirectory
         self.shouldCreatePackage = shouldCreatePackage
         self.packageTarget = packageTarget
         self.xcodeTarget = xcodeTarget
         self.xcodeTestTarget = xcodeTestTarget
         self.filesOnly = filesOnly
+        self.dryRun = dryRun
+        self.templateDirectory = templateDirectory
         self.shouldGenerateTests = shouldGenerateTests
         self.shouldSkipDomain = shouldSkipDomain
         self.type = type
@@ -71,7 +83,7 @@ struct FeatureGenerator {
     }
 
     /// Renders all template files for the given feature and writes them to disk.
-    /// Skips existing files (throws `ForgeError.fileAlreadyExists`).
+    /// Refuses existing files (throws `ForgeError.fileAlreadyExists`). Dry runs only plan and validate.
     /// - Parameter feature: Validated feature name.
     /// - Parameter selection: Controls which file roles to include.
     /// - Returns: A result with paths, detected Xcode project, and package info.
@@ -84,23 +96,35 @@ struct FeatureGenerator {
             try PackageTargetName.validate(packageTarget)
         }
 
-        // Inspect target directory for an existing .xcodeproj for contextual file headers
-        let xcodeProjects = findXcodeProjects(in: projectPath)
         let packageOutput = shouldCreatePackage || packageTarget != nil
+        let configuredProject = packageOutput || filesOnly ? nil : xcodeProject
+        let xcodeProjects: [URL]
+        if let configuredProject {
+            var isDirectory: ObjCBool = false
+            guard configuredProject.pathExtension == "xcodeproj",
+                  FileManager.default.fileExists(atPath: configuredProject.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw ForgeError.invalidArguments("The 'paths.xcode_project' setting must point to an existing .xcodeproj directory. Check '\(configuredProject.path)'.")
+            }
+            xcodeProjects = [configuredProject]
+        } else {
+            xcodeProjects = findXcodeProjects(in: projectPath)
+        }
         let integratesXcode = !filesOnly && (xcodeTarget != nil || xcodeTestTarget != nil || (!packageOutput && !xcodeProjects.isEmpty))
         if integratesXcode {
             try Self.validateXcodeOptions(package: packageOutput)
             guard !xcodeProjects.isEmpty else {
-                throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set --path or paths.root to the directory containing your Xcode project.")
+                throw ForgeError.invalidArguments("No .xcodeproj found in '\(projectPath.path)'. Set paths.xcode_project or point --path or paths.root at the directory containing your Xcode project.")
             }
             guard xcodeProjects.count == 1 else {
                 let names = xcodeProjects.map(\.lastPathComponent).joined(separator: ", ")
-                throw ForgeError.invalidArguments("Multiple Xcode projects found in '\(projectPath.path)': \(names). Set --path or paths.root to a directory containing one .xcodeproj.")
+                throw ForgeError.invalidArguments("Multiple Xcode projects found in '\(projectPath.path)': \(names). Select one with paths.xcode_project.")
             }
         }
         let xcodeProject    = xcodeProjects.first
         let headerContext   = FileHeaderContext(projectPath: projectPath, xcodeProject: xcodeProject)
-        let featureRoot     = projectPath.appendingPathComponent(feature.folderName, isDirectory: true)
+        let outputDirectory = packageOutput ? projectPath : featureDirectory ?? projectPath
+        let featureRoot     = outputDirectory.appendingPathComponent(feature.folderName, isDirectory: true)
         let targetName      = packageTarget ?? feature.typeName
         let testSpecs = shouldGenerateTests
             ? type.testTemplateSpecs.filter { !shouldSkipDomain || !$0.file.isDomainTest } : []
@@ -112,10 +136,10 @@ struct FeatureGenerator {
         } else if !shouldCreatePackage, packageTarget != nil {
             lockResource = projectPath.appendingPathComponent("Package.swift")
         } else {
-            lockResource = projectPath
+            lockResource = outputDirectory
         }
-        let lock = try GenerationLock.acquire(for: lockResource)
-        defer { GenerationLock.release(lock) }
+        let lock = try dryRun ? nil : GenerationLock.acquire(for: lockResource)
+        defer { if let lock { GenerationLock.release(lock) } }
 
         let xcodeIntegration = try integratedProject.map {
             try XcodeProjectIntegration(project: $0, target: xcodeTarget, testTarget: xcodeTestTarget,
@@ -143,7 +167,9 @@ struct FeatureGenerator {
             let targetTestsDir = testsDir.appendingPathComponent("\(packageTarget)Tests", isDirectory: true)
             testsRoot = targetTestsDir.appendingPathComponent(feature.folderName, isDirectory: true)
         } else if let xcodeIntegration {
-            (sourcesRoot, testsRoot) = try xcodeIntegration.outputDirectories(featureRoot: featureRoot)
+            (sourcesRoot, testsRoot) = try xcodeIntegration.outputDirectories(
+                featureRoot: featureRoot, usesConfiguredFeatureDirectory: featureDirectory != nil
+            )
         } else {
             // Standard Xcode directory: places code under Feature/ and tests under Feature/Tests
             sourcesRoot = featureRoot
@@ -165,6 +191,7 @@ struct FeatureGenerator {
         // SwiftPM replaces hyphens in target names when forming Swift module names.
         sharedContext["moduleName"] = targetName.replacingOccurrences(of: "-", with: "_")
         sharedContext["isClean"] = type.hasCleanLayers
+        sharedContext["isPackage"] = packageOutput
         for architecture in PresentationArchitecture.allCases {
             sharedContext["is\(architecture.rawValue.uppercased())"] =
                 type == FeatureType.resolve(presentation: architecture, clean: type.hasCleanLayers)
@@ -194,9 +221,9 @@ struct FeatureGenerator {
             .map { spec in
                 let header  = try Templates.fileHeader(
                     fileName: spec.file.fileName(for: feature.typeName),
-                    context: headerContext
+                    context: headerContext, overrides: templateDirectory
                 )
-                let body    = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
+                let body    = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
                 let layer   = spec.file.layer(for: type)
                 // "Root" files (like DependencyContainer) sit directly in sourcesRoot, others inside layer folder
                 let directory = layer == "Root"
@@ -217,7 +244,7 @@ struct FeatureGenerator {
                 "isConcurrency": binding == .concurrency,
                 "isSwiftTesting": testing == .swiftTesting,
                 "isFactory": di == .factory,
-            ])
+            ], overrides: templateDirectory)
             let packageUrl = featureRoot.appendingPathComponent("Package.swift")
             files.append(GeneratedFile(url: packageUrl, content: packageContent))
             createdSwiftPackage = featureRoot
@@ -244,6 +271,13 @@ struct FeatureGenerator {
             }
         }
 
+        // Validate every selected override before Xcode may resolve dependencies while
+        // reading build settings. The actual app module is substituted after planning.
+        for (spec, url) in zip(testSpecs, testURLs) {
+            _ = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: templateDirectory)
+            _ = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
+        }
+
         let packageUpdate: SwiftPackageIntegration.Update?
         if !shouldCreatePackage, let packageTarget {
             packageUpdate = try SwiftPackageIntegration.plan(
@@ -255,16 +289,25 @@ struct FeatureGenerator {
 
         let xcodeUpdate = try xcodeIntegration?.plan(
             files: files.map(\.url), testFiles: testURLs, factory: di == .factory,
-            readBuildSettings: readXcodeBuildSettings
+            readBuildSettings: readXcodeBuildSettings, resolveBuildSettings: !dryRun
         )
 
         if let moduleName = xcodeUpdate?.testModuleName {
             sharedContext["moduleName"] = moduleName
         }
         for (spec, url) in zip(testSpecs, testURLs) {
-            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext)
-            let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
+            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: templateDirectory)
+            let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
             files.append(GeneratedFile(url: url, content: header + body))
+        }
+
+        if dryRun {
+            return GenerationResult(
+                createdFiles: files.map(\.url) + (packageUpdate?.changed == true ? [packageUpdate!.manifestURL] : [])
+                    + (xcodeUpdate.flatMap { $0.changed ? [$0.projectFile] : nil } ?? []),
+                detectedXcodeProject: xcodeProject, createdSwiftPackage: createdSwiftPackage,
+                detectedSwiftPackageTarget: packageTarget, registeredXcodeTarget: xcodeUpdate?.targetName,
+                registeredXcodeTestTarget: xcodeUpdate?.testTargetName)
         }
 
         var written: [PublishedFile] = []
