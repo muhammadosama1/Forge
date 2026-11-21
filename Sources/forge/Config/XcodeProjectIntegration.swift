@@ -130,7 +130,7 @@ struct XcodeProjectIntegration {
         return folders.first.map { URL(fileURLWithPath: $0.logicalPath, isDirectory: true).appendingPathComponent(feature, isDirectory: true) }
     }
 
-    func plan(files: [URL], testFiles: [URL], factory: Bool, readBuildSettings: BuildSettingsReader) throws -> Update {
+    func plan(files: [URL], testFiles: [URL], factory: Bool, readBuildSettings: BuildSettingsReader, resolveBuildSettings: Bool = true) throws -> Update {
         guard let sources = try app.sourcesBuildPhase() else {
             throw ForgeError.invalidArguments("Xcode app target '\(app.name)' has no Sources build phase. Add a Compile Sources phase in Xcode or select a different target.")
         }
@@ -176,9 +176,9 @@ struct XcodeProjectIntegration {
             membership.phase.files = (membership.phase.files ?? []) + [buildFile]
         }
 
-        let moduleName = try tests.map {
+        let moduleName = try resolveBuildSettings ? tests.map {
             try Self.testModuleName(in: project, root: root, app: app, tests: $0, readBuildSettings: readBuildSettings)
-        }
+        } : nil
         var updated: Data?
         if changed {
             guard let data = try graph.dataRepresentation() else {

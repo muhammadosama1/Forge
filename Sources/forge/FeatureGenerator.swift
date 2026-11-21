@@ -2,7 +2,7 @@ import Foundation
 
 /// Outcome of a feature generation run.
 struct GenerationResult {
-    /// Absolute paths of every file that was written to disk.
+    /// Created/updated file paths, or planned paths when dryRun is enabled.
     let createdFiles: [URL]
     /// An `.xcodeproj` found under the project root, if any.
     let detectedXcodeProject: URL?
@@ -25,6 +25,8 @@ struct FeatureGenerator {
     let xcodeTarget: String?
     let xcodeTestTarget: String?
     let filesOnly: Bool
+    let dryRun: Bool
+    let templateDirectory: URL?
     /// Whether to generate test files.
     let shouldGenerateTests: Bool
     /// When `true`, Domain layer files (Entity, UseCase, Repository protocol) are skipped.
@@ -47,13 +49,15 @@ struct FeatureGenerator {
         xcodeTarget: String? = nil,
         xcodeTestTarget: String? = nil,
         filesOnly: Bool = false,
+        dryRun: Bool = false,
         shouldGenerateTests: Bool,
         shouldSkipDomain: Bool,
         type: FeatureType,
         category: FeatureCategory?,
         binding: BindingStrategy = .combine,
         testing: TestFramework = .xctest,
-        di: DependencyInjectionStrategy = .native
+        di: DependencyInjectionStrategy = .native,
+        templateDirectory: URL? = nil
     ) {
         self.projectPath = projectPath
         self.shouldCreatePackage = shouldCreatePackage
@@ -61,6 +65,8 @@ struct FeatureGenerator {
         self.xcodeTarget = xcodeTarget
         self.xcodeTestTarget = xcodeTestTarget
         self.filesOnly = filesOnly
+        self.dryRun = dryRun
+        self.templateDirectory = templateDirectory
         self.shouldGenerateTests = shouldGenerateTests
         self.shouldSkipDomain = shouldSkipDomain
         self.type = type
@@ -71,7 +77,7 @@ struct FeatureGenerator {
     }
 
     /// Renders all template files for the given feature and writes them to disk.
-    /// Skips existing files (throws `ForgeError.fileAlreadyExists`).
+    /// Refuses existing files (throws `ForgeError.fileAlreadyExists`). Dry runs only plan and validate.
     /// - Parameter feature: Validated feature name.
     /// - Parameter selection: Controls which file roles to include.
     /// - Returns: A result with paths, detected Xcode project, and package info.
@@ -114,8 +120,8 @@ struct FeatureGenerator {
         } else {
             lockResource = projectPath
         }
-        let lock = try GenerationLock.acquire(for: lockResource)
-        defer { GenerationLock.release(lock) }
+        let lock = try dryRun ? nil : GenerationLock.acquire(for: lockResource)
+        defer { if let lock { GenerationLock.release(lock) } }
 
         let xcodeIntegration = try integratedProject.map {
             try XcodeProjectIntegration(project: $0, target: xcodeTarget, testTarget: xcodeTestTarget,
@@ -165,6 +171,7 @@ struct FeatureGenerator {
         // SwiftPM replaces hyphens in target names when forming Swift module names.
         sharedContext["moduleName"] = targetName.replacingOccurrences(of: "-", with: "_")
         sharedContext["isClean"] = type.hasCleanLayers
+        sharedContext["isPackage"] = packageOutput
         for architecture in PresentationArchitecture.allCases {
             sharedContext["is\(architecture.rawValue.uppercased())"] =
                 type == FeatureType.resolve(presentation: architecture, clean: type.hasCleanLayers)
@@ -194,9 +201,9 @@ struct FeatureGenerator {
             .map { spec in
                 let header  = try Templates.fileHeader(
                     fileName: spec.file.fileName(for: feature.typeName),
-                    context: headerContext
+                    context: headerContext, overrides: templateDirectory
                 )
-                let body    = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
+                let body    = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
                 let layer   = spec.file.layer(for: type)
                 // "Root" files (like DependencyContainer) sit directly in sourcesRoot, others inside layer folder
                 let directory = layer == "Root"
@@ -217,7 +224,7 @@ struct FeatureGenerator {
                 "isConcurrency": binding == .concurrency,
                 "isSwiftTesting": testing == .swiftTesting,
                 "isFactory": di == .factory,
-            ])
+            ], overrides: templateDirectory)
             let packageUrl = featureRoot.appendingPathComponent("Package.swift")
             files.append(GeneratedFile(url: packageUrl, content: packageContent))
             createdSwiftPackage = featureRoot
@@ -244,6 +251,13 @@ struct FeatureGenerator {
             }
         }
 
+        // Validate every selected override before Xcode may resolve dependencies while
+        // reading build settings. The actual app module is substituted after planning.
+        for (spec, url) in zip(testSpecs, testURLs) {
+            _ = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: templateDirectory)
+            _ = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
+        }
+
         let packageUpdate: SwiftPackageIntegration.Update?
         if !shouldCreatePackage, let packageTarget {
             packageUpdate = try SwiftPackageIntegration.plan(
@@ -255,16 +269,25 @@ struct FeatureGenerator {
 
         let xcodeUpdate = try xcodeIntegration?.plan(
             files: files.map(\.url), testFiles: testURLs, factory: di == .factory,
-            readBuildSettings: readXcodeBuildSettings
+            readBuildSettings: readXcodeBuildSettings, resolveBuildSettings: !dryRun
         )
 
         if let moduleName = xcodeUpdate?.testModuleName {
             sharedContext["moduleName"] = moduleName
         }
         for (spec, url) in zip(testSpecs, testURLs) {
-            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext)
-            let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext)
+            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: templateDirectory)
+            let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
             files.append(GeneratedFile(url: url, content: header + body))
+        }
+
+        if dryRun {
+            return GenerationResult(
+                createdFiles: files.map(\.url) + (packageUpdate?.changed == true ? [packageUpdate!.manifestURL] : [])
+                    + (xcodeUpdate.flatMap { $0.changed ? [$0.projectFile] : nil } ?? []),
+                detectedXcodeProject: xcodeProject, createdSwiftPackage: createdSwiftPackage,
+                detectedSwiftPackageTarget: packageTarget, registeredXcodeTarget: xcodeUpdate?.targetName,
+                registeredXcodeTestTarget: xcodeUpdate?.testTargetName)
         }
 
         var written: [PublishedFile] = []

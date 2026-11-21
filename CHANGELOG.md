@@ -3,12 +3,22 @@
 ## Unreleased
 
 ### Added
+- Side-effect-free `forge make --dry-run`, with explicit deferral of Xcode test build-setting validation.
+- `forge templates list/export` and local per-template overrides under `.forge/templates`, with contract v1 and strict syntax/context validation.
+- Public opaque feature factories for generated package consumers, isolated preview fixtures, and consumer-module verification.
+- Injectable async MVVM/MVI list/form behavior and generated tests for failures, retries, cancellation, and duplicate submissions.
+
+### Changed
+- Clean live data sources require injected application operations; sample success data is now explicitly selected by preview/test construction.
+- Prioritize MVVM/MVI and local customization while preserving other architectures; document a balanced solo/team validation pilot.
+
 - Register generated Swift sources with an existing Xcode app target. Forge selects a sole app target automatically, accepts a target from `--xcode-target` or `.forge.yml`, and supports `--files-only` for manual wiring.
 - Register generated tests with an existing app-hosted Xcode unit-test target and import the app's resolved Swift module. Select a target with `--xcode-test-target` or `paths.xcode_test_target` when needed.
 - Generate directly into dedicated Xcode synchronized app and test folders and let Xcode manage target membership.
 - Link the Factory Swift package product to existing Xcode app targets when `di: factory` is selected.
 
 ### Fixed
+- Propagate Clean VIPER loading failures instead of returning fake sample success, and handle cancellation separately in generated async loading paths.
 - Report actionable errors for missing or ambiguous targets, invalid configuration, missing architecture in scripts, and blocked output paths before writing feature files.
 
 ## [2.0.0] - 2026-11-09
