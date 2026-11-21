@@ -88,8 +88,8 @@ flags:
         model = stack / ".templates/viewModel.swift.stencil"
         require(model.is_file(), "Architecture setup did not export editable templates")
         editable = model.read_text()
-        model.write_text(editable.replace("{{ forge.viewModelMembers }}",
-                                         "    let teamLabel = \"Team\"\n{{ forge.viewModelMembers }}"))
+        model.write_text(editable.replace("{{ forge.viewModelProperties }}",
+                                         "    let teamLabel = \"Team\"\n{{ forge.viewModelProperties }}"))
         run([forge, "init", "-mvvm", "--path", stack])
         run([forge, "validate", "--path", stack])
         for name, category in (("Login", "-form"), ("Orders", "-list")):

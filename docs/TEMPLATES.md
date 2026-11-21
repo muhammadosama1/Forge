@@ -29,16 +29,31 @@ Keep the active insertion points when editing templates. The same ViewModel or s
 
 | Template | Insertion points |
 |---|---|
-| MVVM ViewModel | `forge.viewModelMembers` inside the class and `forge.viewModelTypes` after it. |
-| MVI store | `forge.storeMembers` inside the class and `forge.storeTypes` after it. |
+| MVVM ViewModel | `forge.viewModelProperties`, `forge.viewModelInitializers`, and `forge.viewModelActions` inside the class. Keep `forge.viewModelTypes` after it. |
+| MVI store | `forge.storeProperties`, `forge.storeInitializers`, and `forge.storeActions` inside the class. Keep `forge.storeTypes` after it. |
 | MVVM or MVI form view | `forge.field1Binding` and `forge.field2Binding`, one per field. |
 | MVVM or MVI list view | `forge.listItems` as the collection passed to the list. |
 
-For example, change the default control to `ShopTextField(title: "Name", text: {{ forge.field1Binding }})`. The host target supplies `ShopTextField`. You can add team-owned properties, methods, and convenience initializers around the generated members. Update `dependencyContainer.swift.stencil` and any team preview/test construction paths when they need to supply a new dependency. The compiled MVVM example in [the generated package verification script](../Scripts/verify-generated.py) adds a coordinator and exercises custom initialization for forms and lists.
+For example, change the default control to `ShopTextField(title: "Name", text: {{ forge.field1Binding }})`. The host target supplies `ShopTextField`. You can add team-owned properties, methods, and convenience initializers around the generated members. Update `dependencyContainer.swift.stencil` and any team preview/test construction paths when they need to supply a new dependency. The compiled MVVM example adds a coordinator to both the live dependency container and the isolated preview. It also supplies a custom text field and row, and connects a team operation through the Clean remote data source. Its tests use the generated factory to check dependency injection, submission, and list retry. [Generated package verification script](../Scripts/verify-generated.py)
+
+To own the designated initializer, replace the `…Initializers` block with your own signature and body. For example, this MVVM initializer accepts a team dependency alongside the managed parameters.
+
+```swift
+    private let analytics: ShopAnalytics
+
+    init(analytics: ShopAnalytics{{ forge.viewModelInitializerParametersAfterComma }}) {
+        self.analytics = analytics
+        {{ forge.viewModelInitializerAssignments }}
+    }
+```
+
+Use `…InitializerParameters` without the comma when Forge supplies the first parameter. Both parameter insertion points expand to empty text when a variant has no managed parameters. The assignments block follows the indentation of its insertion point. Update the team’s live dependency container, previews, tests, and any convenience initializers when they need to supply a new required argument. Projects exported with the earlier `…Members` block can keep it or adopt the separate insertion points.
 
 ### Validate in CI
 
-Run `forge validate` from the project, or pass `--config path/to/team.yml`. It renders each enabled category with the configured defaults offline. Use `forge make … --dry-run` to check any additional flag combinations you use. Treat the check as a rendering and wiring check. Swift compilation is the next gate for custom code. A CI job can generate sample features into a disposable checkout of its host project and run the normal Xcode build and tests there.
+If a required insertion point is inside a branch Forge skips, the error identifies the template, insertion point, affected screen, and the controlling condition. Move the insertion point to a shared position when every screen needs it, or add it to the branch that runs for that screen. Duplicate insertion points report both active locations.
+
+Run `forge validate` from the project, or pass `--config path/to/team.yml`. It checks every configured template path and renders each enabled category with the configured defaults offline. Use `forge make … --dry-run` to check any additional flag combinations you use. Treat the check as a rendering and wiring check. Swift compilation is the next gate for custom code. A CI job can generate sample features into a disposable checkout of its host project and run the normal Xcode build and tests there.
 
 For self-contained templates, use a temporary directory and compile a generated package.
 

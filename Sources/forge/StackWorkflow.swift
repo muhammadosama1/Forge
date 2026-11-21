@@ -17,7 +17,9 @@ enum StackWorkflow {
         if let selected = config?.architecture, let requested, selected != requested {
             throw ForgeError.invalidArguments("The project already uses \(selected.rawValue.uppercased()). Run forge init without an architecture flag to keep it.")
         }
-        if config?.stack != nil {
+        if let stack = config?.stack {
+            try StackTemplates(config: stack, directory: root.appendingPathComponent(".templates"))
+                .checkReferences()
             print("Forge is already initialized at \(configURL.path). Run forge validate to check .templates/.")
             return
         }
@@ -144,6 +146,7 @@ enum StackWorkflow {
         let config = loaded.config
         let templates = StackTemplates(config: stack,
             directory: loaded.fileURL.deletingLastPathComponent().appendingPathComponent(".templates"))
+        try templates.checkReferences()
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-validation-\(UUID())")
         let feature = try FeatureName(rawValue: "ForgeSample", naming: config.naming)
         let type = FeatureType.resolve(presentation: architecture, clean: config.flags.clean)

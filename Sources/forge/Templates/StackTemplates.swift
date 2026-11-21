@@ -9,33 +9,18 @@ struct StackTemplates {
             guard let builtIn else { throw ForgeError.invalidArguments("No template configured for '\(role)'.") }
             return try TemplateRenderer.render(builtIn + ".stencil", context: context)
         }
-        let url = directory.appendingPathComponent(file.template)
-        guard resolvedPath(url).hasPrefix(resolvedPath(directory) + "/"),
-              resolvedPath(directory) == resolvedPath(directory.deletingLastPathComponent()) + "/.templates" else {
-            throw ForgeError.invalidArguments("Template '\(url.path)' escapes .templates/. Move it into the project template directory.")
-        }
-        guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
-              let source = try? String(contentsOf: url, encoding: .utf8) else {
-            throw ForgeError.invalidArguments("Cannot read template '\(url.path)' for '\(role)'. Restore the template or correct its path in stack.files.")
-        }
+        let (url, source) = try read(file, role: role)
 
         var values = TemplateRenderer.values(for: context)
         var required: Set<String> = []
+        var layouts: [Set<String>] = []
         if let owner = Self.observableOwner(for: role), let builtIn {
             let prefix = "forge." + role
             let model = try TemplateRenderer.render(builtIn + ".stencil", context: context)
-            // The built-in state owner uses one top-level final class, followed by supporting types.
-            // Only split the trusted built-in output. Team templates declare their own insertion points.
-            guard let declaration = model.range(of: "\nfinal class " + (context["name"] as? String ?? "") + owner),
-                  let opening = model[declaration.upperBound...].range(of: " {\n"),
-                  let closing = model[opening.upperBound...].range(of: "\n}") else {
-                throw ForgeError.invalidArguments("The built-in '\(role)' template is missing its composition boundaries.")
-            }
-            values[prefix + "Members"] = String(model[opening.upperBound..<closing.lowerBound])
-            let supportingTypes = String(model[closing.upperBound...])
-            values[prefix + "Types"] = supportingTypes
-            required.insert(prefix + "Members")
-            if !supportingTypes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let fragments = try ModelFragments(model: model, owner: (context["name"] as? String ?? "") + owner, role: role)
+            fragments.add(to: &values, prefix: prefix)
+            layouts = ModelFragments.layouts(prefix: prefix)
+            if !fragments.types.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 required.insert(prefix + "Types")
             }
         }
@@ -52,7 +37,35 @@ struct StackTemplates {
             if values["isList"] as? Bool == true { required.insert("forge.listItems") }
         }
         let category = values["isForm"] as? Bool == true ? "form" : (values["isList"] as? Bool == true ? "list" : "default")
-        return try TemplateRenderer.renderSource(source, context: values, name: url.path, required: required, category: category)
+        return try TemplateRenderer.renderSource(source, context: values, name: url.path, required: required, layouts: layouts, category: category)
+    }
+
+    func checkReferences() throws {
+        var failures: [String] = []
+        for role in config.files.keys.sorted() {
+            guard let file = config.files[role] else { continue }
+            do {
+                _ = try read(file, role: role)
+            } catch {
+                failures.append((error as? ForgeError)?.message ?? error.localizedDescription)
+            }
+        }
+        if !failures.isEmpty {
+            throw ForgeError.invalidArguments(failures.joined(separator: "\n"))
+        }
+    }
+
+    private func read(_ file: StackConfig.File, role: String) throws -> (URL, String) {
+        let url = directory.appendingPathComponent(file.template)
+        guard resolvedPath(url).hasPrefix(resolvedPath(directory) + "/"),
+              resolvedPath(directory) == resolvedPath(directory.deletingLastPathComponent()) + "/.templates" else {
+            throw ForgeError.invalidArguments("Template '\(url.path)' escapes .templates/. Move it into the project template directory.")
+        }
+        guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            throw ForgeError.invalidArguments("Cannot read template '\(url.path)' for '\(role)'. Restore the template or correct its path in stack.files.")
+        }
+        return (url, source)
     }
 
     private static func observableOwner(for role: String) -> String? {
@@ -106,7 +119,11 @@ struct StackTemplates {
 
                 @MainActor
                 final class {{ name }}\(owner): ObservableObject {
-                {% endif %}{{ forge.\(role)Members }}
+                {% endif %}{{ forge.\(role)Properties }}
+
+                {{ forge.\(role)Initializers }}
+
+                {{ forge.\(role)Actions }}
                 }
                 {{ forge.\(role)Types }}
 

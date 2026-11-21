@@ -64,12 +64,16 @@ def show_failure(name, error, log_path):
 
 
 def customize_mvvm(directory):
-    """Exercise the documented team edits through compilation and generated tests."""
+    """Compile a team stack through public, live, preview, and test construction."""
     config = directory / ".forge.yml"
     config.write_text(config.read_text() + """
     coordinator:
       template: coordinator.swift.stencil
       output: "Navigation/{{ name }}Coordinator.swift"
+      target: source
+    controls:
+      template: controls.swift.stencil
+      output: "Presentation/{{ name }}Controls.swift"
       target: source
     teamTests:
       template: teamTests.swift.stencil
@@ -78,8 +82,51 @@ def customize_mvvm(directory):
 """)
     templates = directory / ".templates"
     (templates / "coordinator.swift.stencil").write_text("""
+import Foundation
+
 struct {{ name }}Coordinator {
-    let screenName = "{{ name }}"
+    enum Source: Equatable { case live, preview }
+    let source: Source
+}
+
+enum {{ name }}TeamOperations {
+    static let profileID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+
+    static func submit(_ name: String, _ note: String) throws {
+        guard name == "Edited name", note == "Edited note" else { throw URLError(.badServerResponse) }
+    }
+
+    static func retrying<Value>(_ value: Value) -> () async throws -> Value {
+        var didAttempt = false
+        return {
+            guard didAttempt else {
+                didAttempt = true
+                throw URLError(.notConnectedToInternet)
+            }
+            return value
+        }
+    }
+}
+""")
+    (templates / "controls.swift.stencil").write_text("""
+import SwiftUI
+
+struct {{ name }}TeamTextField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        TextField(title, text: $text)
+            .textFieldStyle(.roundedBorder)
+    }
+}
+
+struct {{ name }}TeamRow: View {
+    let title: String
+
+    var body: some View {
+        Label(title, systemImage: "star")
+    }
 }
 """)
     (templates / "teamTests.swift.stencil").write_text("""
@@ -87,45 +134,234 @@ import XCTest
 @testable import {{ moduleName }}
 
 final class {{ name }}TeamTests: XCTestCase {
-    func testCustomViewModelUsesCoordinator() async {
-        await MainActor.run {
-            let coordinator = {{ name }}Coordinator()
-            {% if isForm %}
-            let model = {{ name }}ViewModel(coordinator: coordinator, submitAction: { _, _ in })
-            {% else %}{% if isList %}
-            let model = {{ name }}ViewModel(coordinator: coordinator, loadItems: { [] })
-            {% else %}{% if isClean %}
-            let model = {{ name }}DependencyContainer.makeViewModel()
-            {% else %}
-            let model = {{ name }}ViewModel()
-            {% endif %}{% endif %}{% endif %}
-            XCTAssertEqual(model.coordinator.screenName, "{{ name }}")
-        }
+    @MainActor
+    func testLiveFeatureUsesTeamConstruction() async {
+        let view = {{ name }}Feature.makeView() as? {{ name }}View
+        XCTAssertEqual(view?.teamCoordinatorSource, .live)
+        let model = {{ name }}DependencyContainer.makeViewModel()
+        XCTAssertEqual(model.coordinator?.source, .live)
+        let preview = {{ name }}Preview.makeViewModel()
+        XCTAssertEqual(preview.coordinator?.source, .preview)
+{% if isForm %}
+        await model.submit()
+        XCTAssertNotNil(model.errorMessage)
+        model.field1 = "Edited name"
+        model.field2 = "Edited note"
+        await model.submit()
+        XCTAssertTrue(model.didSubmit)
+        XCTAssertNil(model.errorMessage)
+{% endif %}
+{% if isList %}
+        await model.load()
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.items.isEmpty)
+        await model.load()
+        XCTAssertEqual(model.items.map(\\.title), ["Team profile"])
+        XCTAssertNil(model.errorMessage)
+{% endif %}
     }
 }
 """)
     model = templates / "viewModel.swift.stencil"
-    model.write_text(model.read_text().replace("{{ forge.viewModelMembers }}", """{{ forge.viewModelMembers }}
+    model.write_text(model.read_text().replace("{{ forge.viewModelInitializers }}", """    let coordinator: {{ name }}Coordinator?
 
-    private(set) var coordinator = {{ name }}Coordinator()
-
-{% if isForm %}
-    convenience init(coordinator: {{ name }}Coordinator,
-                     submitAction: @escaping (String, String) async throws -> Void) {
-        self.init(submitAction: submitAction)
+    init(coordinator: {{ name }}Coordinator? = nil{{ forge.viewModelInitializerParametersAfterComma }}) {
         self.coordinator = coordinator
+        {{ forge.viewModelInitializerAssignments }}
+    }
+
+{% if isClean %}
+{% if isForm %}
+    convenience init(
+        coordinator: {{ name }}Coordinator? = nil,
+        {% if hasNoDomain %}repository: {{ name }}RepositoryImpl{% else %}useCase: {{ name }}UseCase{% endif %}
+    ) {
+        self.init(coordinator: coordinator, submitAction: { first, second in
+{% if hasNoDomain %}
+            try await repository.submit{{ name }}(field1: first, field2: second)
+{% else %}
+            try await useCase.submit(field1: first, field2: second)
+{% endif %}
+        })
     }
 {% endif %}
 {% if isList %}
-    convenience init(coordinator: {{ name }}Coordinator,
-                     loadItems: @escaping () async throws -> [{{ name }}Item]) {
-        self.init(loadItems: loadItems)
-        self.coordinator = coordinator
+    convenience init(
+        coordinator: {{ name }}Coordinator? = nil,
+        {% if hasNoDomain %}repository: {{ name }}RepositoryImpl{% else %}useCase: {{ name }}UseCase{% endif %}
+    ) {
+        self.init(coordinator: coordinator, loadItems: {
+{% if hasNoDomain %}
+            let value = try await repository.fetch{{ name }}()
+{% else %}
+            let value = try await useCase.execute()
+{% endif %}
+            return [{{ name }}Item(id: value.id, title: value.title)]
+        })
+    }
+{% endif %}
+{% endif %}"""))
+
+    container = templates / "dependencyContainer.swift.stencil"
+
+    def inject_coordinator(source, origin):
+        def constructor(match):
+            prefix = "{{ name }}ViewModel(coordinator: .init(source: ." + origin + ")"
+            if not match[1]:
+                return prefix + ", "
+            if origin == "preview":
+                return prefix + ")"
+            return prefix + """{% if isForm %}, submitAction: {{ name }}TeamOperations.submit{% endif %}{% if isList %}, loadItems: {{ name }}TeamOperations.retrying([
+                {{ name }}Item(id: {{ name }}TeamOperations.profileID, title: "Team profile")
+            ]){% endif %})"""
+
+        return re.sub(r"\{\{ name \}\}ViewModel\((?!coordinator:)(\))?", constructor, source)
+
+    # Give previews an explicit dependency before wiring live calls in both DI branches.
+    composition = re.sub(r"^enum \{\{ name \}\}Preview \{[\s\S]*?^\}",
+                         lambda match: inject_coordinator(match[0], "preview"),
+                         container.read_text(), flags=re.MULTILINE)
+    container.write_text(inject_coordinator(composition, "live")
+                         .replace("{{ name }}RemoteDataSource()", "{{ name }}RemoteDataSource.teamFixture()"))
+
+    remote = templates / "remoteDataSource.swift.stencil"
+    remote.write_text(remote.read_text() + """
+{% if isClean %}
+extension {{ name }}RemoteDataSource {
+    static func teamFixture() -> {{ name }}RemoteDataSource {
+        {{ name }}RemoteDataSource(
+            fetch: {{ name }}TeamOperations.retrying(
+                {{ name }}Response(id: {{ name }}TeamOperations.profileID, title: "Team profile")
+            ),
+            submit: {{ name }}TeamOperations.submit
+        )
+    }
+}
+{% endif %}
+""")
+    view = templates / "view.swift.stencil"
+    view.write_text(
+        view.read_text()
+        .replace("struct {{ name }}View: View {",
+                 "struct {{ name }}View: View {\n    let teamCoordinatorSource: {{ name }}Coordinator.Source?")
+        .replace("init(viewModel: {{ name }}ViewModel) {",
+                 "init(viewModel: {{ name }}ViewModel) {\n        teamCoordinatorSource = viewModel.coordinator?.source")
+        .replace('TextField("Field 1", text: {{ forge.field1Binding }})',
+                 '{{ name }}TeamTextField(title: "Display name", text: {{ forge.field1Binding }})')
+        .replace("Text(item.title)", "{{ name }}TeamRow(title: item.title)")
+    )
+
+
+def customize_mvi(directory):
+    """Compile a team-owned store initializer and use it from the feature factory."""
+    config = directory / ".forge.yml"
+    config.write_text(config.read_text() + """
+    teamTests:
+      template: teamTests.swift.stencil
+      output: "Team/{{ name }}TeamTests.swift"
+      target: test
+""")
+    templates = directory / ".templates"
+    store = templates / "store.swift.stencil"
+    store.write_text(store.read_text().replace("{{ forge.storeInitializers }}", """    let teamSource: String
+
+    init(teamSource: String = "test"{{ forge.storeInitializerParametersAfterComma }}) {
+        self.teamSource = teamSource
+        {{ forge.storeInitializerAssignments }}
+    }
+
+{% if isClean %}
+    convenience init(
+        teamSource: String = "test",
+        state: {{ name }}State = {{ name }}State(),
+        {% if hasNoDomain %}repository: {{ name }}RepositoryImpl{% else %}useCase: {{ name }}UseCase{% endif %},
+        reducer: {{ name }}Reducer
+    ) {
+        self.init(teamSource: teamSource, state: state, reducer: reducer, loadValue: {
+{% if hasNoDomain %}
+            try await repository.fetch{{ name }}()
+{% else %}
+            try await useCase.execute()
+{% endif %}
+        }{% if isForm %}, submitAction: { first, second in
+{% if hasNoDomain %}
+            try await repository.submit{{ name }}(field1: first, field2: second)
+{% else %}
+            try await useCase.submit(field1: first, field2: second)
+{% endif %}
+        }{% endif %})
     }
 {% endif %}"""))
+    container = templates / "dependencyContainer.swift.stencil"
+    preview = r"^enum \{\{ name \}\}Preview \{[\s\S]*?^\}"
+    initializer = "{{ name }}Store(reducer: {{ name }}Reducer()"
+    def inject_team_source(source, origin):
+        def clean_constructor(match):
+            return '{{ name }}Store(teamSource: "' + origin + '", ' + match[1] + ':'
+
+        source = re.sub(r"\{\{ name \}\}Store\((repository|useCase):", clean_constructor, source)
+        replacement = '{{ name }}Store(teamSource: "' + origin + '", reducer: {{ name }}Reducer()'
+        if origin == "live":
+            replacement += """{% if isForm %}, submitAction: { first, second in
+                guard first == "Edited name", second == "Edited note" else { throw URLError(.badServerResponse) }
+            }{% endif %}{% if isList %}, loadValue: {
+                [{{ name }}Item(id: UUID(), title: "Team profile")]
+            }{% endif %}"""
+        return source.replace(initializer, replacement)
+
+    source = re.sub(preview, lambda match: inject_team_source(match[0], "preview"), container.read_text(), flags=re.MULTILINE)
+    # The preview already starts with teamSource, so the live replacements skip it.
+    container.write_text(inject_team_source(source, "live")
+                         .replace("{{ name }}RemoteDataSource()", "{{ name }}RemoteDataSource.teamFixture()"))
+    remote = templates / "remoteDataSource.swift.stencil"
+    remote.write_text(remote.read_text() + """
+{% if isClean %}
+extension {{ name }}RemoteDataSource {
+    static func teamFixture() -> {{ name }}RemoteDataSource {
+        {{ name }}RemoteDataSource(
+            fetch: { {{ name }}Response(id: UUID(), title: "Team profile") },
+            submit: { first, second in
+                guard first == "Edited name", second == "Edited note" else { throw URLError(.badServerResponse) }
+            }
+        )
+    }
+}
+{% endif %}
+""")
     view = templates / "view.swift.stencil"
-    view.write_text(view.read_text().replace('TextField("Field 1"', 'TextField("Display name"')
-                    .replace("Text(item.title)", "Label(item.title, systemImage: \"star\")"))
+    view.write_text(
+        view.read_text()
+        .replace("struct {{ name }}View: View {", "struct {{ name }}View: View {\n    let teamSource: String")
+        .replace("init(store: {{ name }}Store) {", "init(store: {{ name }}Store) {\n        teamSource = store.teamSource")
+    )
+    (templates / "teamTests.swift.stencil").write_text("""
+import XCTest
+@testable import {{ moduleName }}
+
+final class {{ name }}TeamTests: XCTestCase {
+    @MainActor
+    func testLiveFeatureUsesCustomStoreInitializer() async {
+        let view = {{ name }}Feature.makeView() as? {{ name }}View
+        XCTAssertEqual(view?.teamSource, "live")
+        let store = {{ name }}DependencyContainer.makeStore()
+        XCTAssertEqual(store.teamSource, "live")
+        XCTAssertEqual({{ name }}Preview.makeStore().teamSource, "preview")
+{% if isForm %}
+        await store.send(.submit)
+        XCTAssertNotNil(store.state.errorMessage)
+        store.updateField1("Edited name")
+        store.updateField2("Edited note")
+        await store.send(.submit)
+        XCTAssertTrue(store.state.didSubmit)
+        XCTAssertNil(store.state.errorMessage)
+{% endif %}
+{% if isList %}
+        await store.send(.onAppear)
+        XCTAssertEqual(store.state.items.map(\\.title), ["Team profile"])
+{% endif %}
+    }
+}
+""")
 
 
 def main():
@@ -182,6 +418,10 @@ def main():
     architectures = list(dict.fromkeys(args.architecture or ARCHITECTURES))
     cases = list(itertools.product(architectures, LAYERS, LAYOUTS))
     failures = []
+    team_tests = {
+        "mvvm": "testLiveFeatureUsesTeamConstruction",
+        "mvi": "testLiveFeatureUsesCustomStoreInitializer",
+    }
     for index, (architecture, layer, layout) in enumerate(cases, start=1):
         name = f"{architecture}-{layer}-{layout}"
         # Exercise SwiftPM's hyphen-to-underscore module naming in one case.
@@ -204,6 +444,8 @@ def main():
                         run([str(forge), "init", f"-{architecture}", "--path", directory], ROOT, log, args.timeout)
                         if architecture == "mvvm":
                             customize_mvvm(Path(directory))
+                        elif architecture == "mvi":
+                            customize_mvi(Path(directory))
                         run([str(forge), "validate", "--path", directory], ROOT, log, args.timeout)
                     # The module deliberately differs from the feature name.
                     run([
@@ -228,6 +470,7 @@ import {target.replace("-", "_")}
                     run(["swift", "build", "--package-path", str(consumer), "--jobs", str(args.jobs)],
                         ROOT, log, args.timeout)
 
+                    expected_team_test = team_tests.get(architecture) if args.stack else None
                     if args.testing == "swift-testing":
                         test_output = run([
                             "swift", "test", "--package-path", str(Path(directory) / "Sample"),
@@ -237,6 +480,10 @@ import {target.replace("-", "_")}
                         if not match or int(match.group(1)) == 0:
                             raise RuntimeError("no generated swift-testing tests passed")
                         executed_count = int(match.group(1))
+                        if expected_team_test:
+                            if not re.search(rf"Test Case '.*\b{expected_team_test}\]' passed", test_output):
+                                raise RuntimeError(f"{expected_team_test} did not run and pass")
+                            executed_count += 1
                     else:
                         run([
                             "swift", "test", "--package-path", str(Path(directory) / "Sample"),
@@ -249,6 +496,8 @@ import {target.replace("-", "_")}
                             raise RuntimeError("no generated tests executed")
                         if any(test.find("failure") is not None or test.find("error") is not None for test in executed):
                             raise RuntimeError("generated tests reported failures")
+                        if expected_team_test and not any(test.get("name") == expected_team_test for test in executed):
+                            raise RuntimeError(f"{expected_team_test} did not run and pass")
                         executed_count = len(executed)
             print(f"PASS {name}: {executed_count} tests", flush=True)
         except (OSError, RuntimeError, ET.ParseError) as error:
