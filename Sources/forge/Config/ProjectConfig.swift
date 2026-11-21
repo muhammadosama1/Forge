@@ -4,6 +4,7 @@ import Foundation
 struct ProjectConfig: Equatable {
     /// Default presentation architecture for the project (e.g. .mvvm, .viper).
     var architecture: PresentationArchitecture?
+    var stack: StackConfig?
 
     /// Reactive state-binding mechanism (e.g. .combine, .concurrency).
     var binding: BindingStrategy = .combine
@@ -44,7 +45,7 @@ struct ProjectConfig: Equatable {
     /// Initializes a `ProjectConfig` from a parsed YAML dictionary.
     init(from dictionary: [String: Any]) throws {
         // Top-level allowed keys
-        let allowedTopLevelKeys: Set<String> = ["architecture", "binding", "testing", "di", "flags", "paths", "naming"]
+        let allowedTopLevelKeys: Set<String> = ["architecture", "binding", "testing", "di", "flags", "paths", "naming", "stack"]
         for key in dictionary.keys {
             guard allowedTopLevelKeys.contains(key) else {
                 throw ForgeError.invalidArguments("Unknown configuration key '\(key)' in .forge.yml.")
@@ -63,6 +64,13 @@ struct ProjectConfig: Equatable {
             self.architecture = arch
         } else {
             self.architecture = nil
+        }
+
+        if let raw = dictionary["stack"] {
+            guard let values = raw as? [String: Any], let architecture else {
+                throw ForgeError.invalidArguments("Set an architecture and provide stack as a mapping.")
+            }
+            stack = try StackConfig(values, architecture: architecture)
         }
 
         // 2. Binding

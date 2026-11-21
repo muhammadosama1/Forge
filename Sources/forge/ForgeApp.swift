@@ -27,6 +27,10 @@ struct Forge {
                 try TemplateCatalog.run(arguments: args)
                 return
             }
+            if args.first == "validate" {
+                try StackWorkflow.validate(arguments: args)
+                return
+            }
             // Scaffold project configuration standard
             if args.first == "init" {
                 try Command.runInit(arguments: args)

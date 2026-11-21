@@ -63,12 +63,78 @@ def show_failure(name, error, log_path):
         print("\n".join(log_path.read_text().splitlines()[-80:]), flush=True)
 
 
+def customize_mvvm(directory):
+    """Exercise the documented team edits through compilation and generated tests."""
+    config = directory / ".forge.yml"
+    config.write_text(config.read_text() + """
+    coordinator:
+      template: coordinator.swift.stencil
+      output: "Navigation/{{ name }}Coordinator.swift"
+      target: source
+    teamTests:
+      template: teamTests.swift.stencil
+      output: "Team/{{ name }}TeamTests.swift"
+      target: test
+""")
+    templates = directory / ".templates"
+    (templates / "coordinator.swift.stencil").write_text("""
+struct {{ name }}Coordinator {
+    let screenName = "{{ name }}"
+}
+""")
+    (templates / "teamTests.swift.stencil").write_text("""
+import XCTest
+@testable import {{ moduleName }}
+
+final class {{ name }}TeamTests: XCTestCase {
+    func testCustomViewModelUsesCoordinator() async {
+        await MainActor.run {
+            let coordinator = {{ name }}Coordinator()
+            {% if isForm %}
+            let model = {{ name }}ViewModel(coordinator: coordinator, submitAction: { _, _ in })
+            {% else %}{% if isList %}
+            let model = {{ name }}ViewModel(coordinator: coordinator, loadItems: { [] })
+            {% else %}{% if isClean %}
+            let model = {{ name }}DependencyContainer.makeViewModel()
+            {% else %}
+            let model = {{ name }}ViewModel()
+            {% endif %}{% endif %}{% endif %}
+            XCTAssertEqual(model.coordinator.screenName, "{{ name }}")
+        }
+    }
+}
+""")
+    model = templates / "viewModel.swift.stencil"
+    model.write_text(model.read_text().replace("{{ forge.viewModelMembers }}", """{{ forge.viewModelMembers }}
+
+    private(set) var coordinator = {{ name }}Coordinator()
+
+{% if isForm %}
+    convenience init(coordinator: {{ name }}Coordinator,
+                     submitAction: @escaping (String, String) async throws -> Void) {
+        self.init(submitAction: submitAction)
+        self.coordinator = coordinator
+    }
+{% endif %}
+{% if isList %}
+    convenience init(coordinator: {{ name }}Coordinator,
+                     loadItems: @escaping () async throws -> [{{ name }}Item]) {
+        self.init(loadItems: loadItems)
+        self.coordinator = coordinator
+    }
+{% endif %}"""))
+    view = templates / "view.swift.stencil"
+    view.write_text(view.read_text().replace('TextField("Field 1"', 'TextField("Display name"')
+                    .replace("Text(item.title)", "Label(item.title, systemImage: \"star\")"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--architecture", action="append", choices=ARCHITECTURES,
         help="repeat to select architectures; default: all",
     )
+    parser.add_argument("--stack", action="store_true", help="generate with editable architecture templates")
     parser.add_argument("--forge", type=Path, help="use an already-built Forge executable")
     parser.add_argument("--jobs", type=positive_int, default=4, help="Swift compiler jobs (default: 4)")
     parser.add_argument(
@@ -134,6 +200,11 @@ def main():
                 ]
                 (Path(directory) / ".forge.yml").write_text("\n".join(config_lines) + "\n")
                 with log_path.open("w") as log:
+                    if args.stack:
+                        run([str(forge), "init", f"-{architecture}", "--path", directory], ROOT, log, args.timeout)
+                        if architecture == "mvvm":
+                            customize_mvvm(Path(directory))
+                        run([str(forge), "validate", "--path", directory], ROOT, log, args.timeout)
                     # The module deliberately differs from the feature name.
                     run([
                         str(forge), "make", "Sample", f"-{architecture}",

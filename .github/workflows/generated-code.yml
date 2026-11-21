@@ -53,6 +53,18 @@ jobs:
           fi
           python3 Scripts/verify-generated.py --architecture "${{ matrix.architecture }}" --jobs 4 "${options[@]}"
 
+      - name: Verify editable stacks
+        shell: bash
+        run: |
+          options=()
+          if [[ "${{ matrix.profile }}" == "advanced" ]]; then
+            options+=(--binding concurrency --testing swift-testing --di factory)
+          fi
+          bin_path=$(swift build --show-bin-path)
+          python3 Scripts/verify-generated.py --forge "$bin_path/forge" --stack \
+            --architecture "${{ matrix.architecture }}" --jobs 4 "${options[@]}" \
+            --logs-dir .build/stack-verification
+
   xcode-smoke:
     name: Generated Xcode app and tests
     runs-on: macos-15

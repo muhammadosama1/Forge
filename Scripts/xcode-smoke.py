@@ -115,6 +115,34 @@ def smoke(forge, destination, root, *, synchronized):
     if synchronized and updated_project != factory_project:
         raise RuntimeError("Forge rewrote the synchronized fixture after Factory was already linked")
 
+    # Exercise custom role routing with the same real hosted test target.
+    run([forge, "init", "-mvvm", "--path", workspace], nested)
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write("""
+    coordinator:
+      template: coordinator.stencil
+      output: "Navigation/{{ name }}Coordinator.swift"
+      target: source
+    teamTests:
+      template: teamTests.stencil
+      output: "Team/{{ name }}TeamTests.swift"
+      target: test
+""")
+    templates = workspace / ".templates"
+    (templates / "coordinator.stencil").write_text(
+        'struct {{ name }}Coordinator { let title = "{{ name }}" }\n', encoding="utf-8")
+    (templates / "teamTests.stencil").write_text("""
+import Testing
+@testable import {{ moduleName }}
+
+@Suite struct {{ name }}TeamTests {
+    @Test func coordinatorTitle() {
+        #expect({{ name }}Coordinator().title == "{{ name }}")
+    }
+}
+""", encoding="utf-8")
+    run([forge, "make", "SmokeStack", "-form", "--tests"], nested)
+
     derived_data = root / f"DerivedData-{layout}"
     output = run([
         "xcodebuild", "test", "-project", project / "Smoke.xcodeproj", "-scheme", "Smoke",
@@ -123,10 +151,10 @@ def smoke(forge, destination, root, *, synchronized):
     ], project, timeout=420)
     xctest = r"Test Case '-\[SmokeTests\.SmokeXCTestViewModelTests [^\]]+\]' passed"
     swift_testing = r"Suite SmokeSwiftTestingViewModelTests passed"
-    if not all(re.search(pattern, output) for pattern in (xctest, swift_testing)):
+    if not all(re.search(pattern, output) for pattern in (xctest, swift_testing, r"Suite SmokeStackTeamTests passed")):
         raise RuntimeError(f"Expected both generated suites to run and pass\n{output}")
-    expected_sources = {f"{feature}ViewModel.swift" for feature in names}
-    expected_tests = {f"{feature}ViewModelTests.swift" for feature in names}
+    expected_sources = {f"{feature}ViewModel.swift" for feature in names} | {"SmokeStackCoordinator.swift"}
+    expected_tests = {f"{feature}ViewModelTests.swift" for feature in names} | {"SmokeStackTeamTests.swift"}
     for target, expected, unexpected in (
         ("SmokeApp", expected_sources, expected_tests),
         ("SmokeTests", expected_tests, expected_sources),

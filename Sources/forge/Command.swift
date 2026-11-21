@@ -34,6 +34,7 @@ struct Command {
     let di: DependencyInjectionStrategy
     /// URL of the loaded `.forge.yml` file, if discovered or explicitly provided.
     let loadedConfigURL: URL?
+    let stack: StackConfig?
 
     init(
         featureName: String,
@@ -54,7 +55,8 @@ struct Command {
         binding: BindingStrategy = .combine,
         testing: TestFramework = .xctest,
         di: DependencyInjectionStrategy = .native,
-        loadedConfigURL: URL? = nil
+        loadedConfigURL: URL? = nil,
+        stack: StackConfig? = nil
     ) {
         self.featureName = featureName
         self.projectPath = projectPath
@@ -75,12 +77,14 @@ struct Command {
         self.testing = testing
         self.di = di
         self.loadedConfigURL = loadedConfigURL
+        self.stack = stack
     }
 
     static let usage = """
     Usage:
       forge make <FeatureName> [--path <ProjectRoot>] [--config <ConfigFile>] [--package] [--target <SwiftPackageTarget> | --xcode-target <AppTarget> | --files-only] [--xcode-test-target <TestTarget>] [-<architecture>] [-clean | --no-clean] [--no-domain | --domain] [--tests | --no-tests] [--dry-run] [-form | -list]
-      forge init [--path <ProjectRoot>] [--force]
+      forge init [<architecture>] [--path <ProjectRoot>] [--adopt]
+      forge validate [--path <ProjectRoot>] [--config <file>]
       forge templates list
       forge templates export <name> [--path <ProjectRoot>] [--config <ConfigFile>]
 
@@ -143,7 +147,8 @@ struct Command {
 
     INIT OPTIONS:
       --path <dir>          Directory to create .forge.yml in (default: current directory)
-      --force               Overwrite existing .forge.yml
+      --adopt               Activate editable templates in a project with legacy overrides
+      --force               Replace a legacy config with starter defaults
 
     TEMPLATE COMMANDS:
       templates list                    List built-in template names
@@ -233,10 +238,25 @@ struct Command {
     static func runInit(arguments: [String]) throws {
         var path = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         var force = false
+        var requested: PresentationArchitecture?
+        var adopt = false
         var index = 1
 
         while index < arguments.count {
             let arg = arguments[index]
+            if arg == "--adopt" {
+                adopt = true
+                index += 1
+                continue
+            }
+            if let architecture = PresentationArchitecture.from(flag: arg) {
+                guard requested == nil else {
+                    throw ForgeError.invalidArguments("Choose exactly one architecture for forge init.")
+                }
+                requested = architecture
+                index += 1
+                continue
+            }
             if arg == "--force" || arg == "-f" {
                 force = true
                 index += 1
@@ -251,19 +271,38 @@ struct Command {
                 index += 2
                 continue
             }
-            throw ForgeError.invalidArguments("Unknown option for init: '\(arg)'. Supported: --path <dir>, --force")
+            throw ForgeError.invalidArguments("Unknown option for init: '\(arg)'. Use an architecture flag, --path <dir>, or --adopt.")
         }
+
+        if (Terminal.isInteractive && !force) || requested != nil || adopt {
+            guard !force else {
+                throw ForgeError.invalidArguments("Omit --force when setting up editable templates.")
+            }
+            try StackWorkflow.initialize(at: path, requested: requested, adopt: adopt)
+            return
+        }
+        let fm = FileManager.default
+        try fm.createDirectory(at: path, withIntermediateDirectories: true)
+        let lock = try GenerationLock.acquire(for: path)
+        defer { GenerationLock.release(lock) }
 
         for filename in ConfigLoader.configFilenames {
             let candidate = path.appendingPathComponent(filename)
-            if FileManager.default.fileExists(atPath: candidate.path) && !force {
-                throw ForgeError.invalidArguments("\(filename) already exists at '\(candidate.path)'. Use --force to overwrite.")
+            guard fm.fileExists(atPath: candidate.path) else { continue }
+            guard force else {
+                throw ForgeError.invalidArguments("\(filename) already exists at '\(candidate.path)'. Run interactive forge init to set up editable templates.")
+            }
+            if (try? ConfigLoader.load(explicitPath: candidate)?.config.stack) != nil {
+                throw ForgeError.invalidArguments("This project has an active editable stack. Edit its existing configuration directly.")
             }
         }
 
         let targetURL = path.appendingPathComponent(".forge.yml")
-        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
-        try ProjectConfig.starterTemplate.write(to: targetURL, atomically: true, encoding: .utf8)
+        if force {
+            try ProjectConfig.starterTemplate.write(to: targetURL, atomically: true, encoding: .utf8)
+        } else {
+            try PublishedFile.write(ProjectConfig.starterTemplate, to: targetURL).removeStagingFile()
+        }
         print("Created .forge.yml at \(targetURL.path)")
     }
 
@@ -437,6 +476,13 @@ struct Command {
             presentation = .mvvm
         }
 
+        if let stack = config.stack {
+            guard presentation == config.architecture else {
+                throw ForgeError.invalidArguments("The selected architecture differs from the configured stack. Remove the architecture flag or select another config.")
+            }
+            try stack.checkCategory(selectedCategory)
+        }
+
         // Map presentation pattern + clean flag into the concrete FeatureType enum
         let type = FeatureType.resolve(presentation: presentation!, clean: useCleanLayers)
 
@@ -459,7 +505,8 @@ struct Command {
             binding: config.binding,
             testing: config.testing,
             di: config.di,
-            loadedConfigURL: loadedConfig?.fileURL
+            loadedConfigURL: loadedConfig?.fileURL,
+            stack: config.stack
         )
     }
 
@@ -470,6 +517,7 @@ struct Command {
         let feature = try FeatureName(rawValue: featureName, naming: naming)
         // Resolve the complete set of required file roles for this architecture
         let resolvedSelection = FeatureFileSelection.all(for: type)
+        let configRoot = loadedConfigURL?.deletingLastPathComponent() ?? projectPath
         // Instantiate the code generator configured with parsed command options
         let generator = FeatureGenerator(
             projectPath: projectPath,
@@ -488,7 +536,8 @@ struct Command {
             binding: binding,
             testing: testing,
             di: di,
-            templateDirectory: (loadedConfigURL?.deletingLastPathComponent() ?? projectPath).appendingPathComponent(".forge/templates")
+            templateDirectory: configRoot.appendingPathComponent(".forge/templates"),
+            stack: stack.map { StackTemplates(config: $0, directory: configRoot.appendingPathComponent(".templates")) }
         )
         // Generate templates and write files to disk
         let result = try generator.generate(feature: feature, selection: resolvedSelection, readXcodeBuildSettings: readXcodeBuildSettings)

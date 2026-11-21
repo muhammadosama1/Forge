@@ -30,7 +30,23 @@ Add `import Foundation` to that file. Replace the example URL with your service.
 
 Run `swift test --package-path Profile` again. Generated tests exercise preview fixtures and repository behavior, so add tests for your API decoding and failure cases as you implement them. In an app that links the package, use `import Profile` and display `ProfileFeature.makeView()` from a SwiftUI view.
 
-## Adapt conventions
+## Make the templates your own
+
+In a project you want to customize, run `forge init` and choose MVVM, or run `forge init -mvvm` in a script. Setup writes the configuration and the editable templates side by side. Commit both so the team shares the same defaults.
+
+1. In `.templates/viewModel.swift.stencil`, add `let analyticsScreen = "{{ name }}"` inside the class, just before `{{ forge.viewModelMembers }}`.
+2. In `.templates/view.swift.stencil`, replace the first form field's display label with a label of your choice. Keep `{{ forge.field1Binding }}` as the text binding. Make the same label edit in any other form branches you use.
+3. Run `forge validate`, then generate a form and a list. Both include the ViewModel property. The form still binds its fields and the list still displays the model's collection.
+
+```sh
+forge validate
+forge make EditProfile -form
+forge make Orders -list
+```
+
+Move `{{ forge.viewModelMembers }}` inside an `{% if isList %}` block to see how Forge reports the form's missing insertion point. Restore the shared position before generating another form. To add a coordinator or test helper, describe its role under `stack.files` and add its Swift template. See the [stack contract](TEMPLATES.md#editable-stacks) and the [compiled custom MVVM fixture](../Scripts/verify-generated.py).
+
+## Export a legacy override
 
 To customize future generated ViewModels, export the built-in template:
 

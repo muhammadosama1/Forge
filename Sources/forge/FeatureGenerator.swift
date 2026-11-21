@@ -29,6 +29,7 @@ struct FeatureGenerator {
     let filesOnly: Bool
     let dryRun: Bool
     let templateDirectory: URL?
+    let stack: StackTemplates?
     /// Whether to generate test files.
     let shouldGenerateTests: Bool
     /// When `true`, Domain layer files (Entity, UseCase, Repository protocol) are skipped.
@@ -61,7 +62,8 @@ struct FeatureGenerator {
         binding: BindingStrategy = .combine,
         testing: TestFramework = .xctest,
         di: DependencyInjectionStrategy = .native,
-        templateDirectory: URL? = nil
+        templateDirectory: URL? = nil,
+        stack: StackTemplates? = nil
     ) {
         self.projectPath = projectPath
         self.xcodeProject = xcodeProject
@@ -73,6 +75,7 @@ struct FeatureGenerator {
         self.filesOnly = filesOnly
         self.dryRun = dryRun
         self.templateDirectory = templateDirectory
+        self.stack = stack
         self.shouldGenerateTests = shouldGenerateTests
         self.shouldSkipDomain = shouldSkipDomain
         self.type = type
@@ -90,8 +93,10 @@ struct FeatureGenerator {
     func generate(
         feature: FeatureName,
         selection: FeatureFileSelection,
-        readXcodeBuildSettings: XcodeProjectIntegration.BuildSettingsReader = XcodeProjectIntegration.readBuildSettings
+        readXcodeBuildSettings: XcodeProjectIntegration.BuildSettingsReader = XcodeProjectIntegration.readBuildSettings,
+        validationOnly: Bool = false
     ) throws -> GenerationResult {
+        try stack?.config.checkCategory(category)
         if let packageTarget {
             try PackageTargetName.validate(packageTarget)
         }
@@ -129,6 +134,13 @@ struct FeatureGenerator {
         let testSpecs = shouldGenerateTests
             ? type.testTemplateSpecs.filter { !shouldSkipDomain || !$0.file.isDomainTest } : []
 
+        let customRoles = stack?.config.files.keys.sorted().compactMap { role -> (String, StackConfig.File)? in
+            guard let file = stack?.config.files[role], file.output != nil,
+                  shouldGenerateTests || !file.isTest else { return nil }
+            return (role, file)
+        } ?? []
+        let generatesTests = !testSpecs.isEmpty || customRoles.contains { $0.1.isTest }
+
         let integratedProject = integratesXcode ? xcodeProject : nil
         let lockResource: URL
         if let integratedProject {
@@ -143,7 +155,7 @@ struct FeatureGenerator {
 
         let xcodeIntegration = try integratedProject.map {
             try XcodeProjectIntegration(project: $0, target: xcodeTarget, testTarget: xcodeTestTarget,
-                                        generatesTests: !testSpecs.isEmpty)
+                                        generatesTests: generatesTests)
         }
         let sourcesRoot: URL
         let testsRoot: URL
@@ -215,25 +227,50 @@ struct FeatureGenerator {
             }
         }
 
-        // Render all specs that belong to the active selection (header + body)
+        let overrides = stack == nil ? templateDirectory : nil
+        func render(role: String, builtIn: String?, to url: URL) throws -> GeneratedFile {
+            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: overrides)
+            let body: String
+            if let stack {
+                body = try stack.render(role: role, builtIn: builtIn, context: sharedContext)
+            } else if let builtIn {
+                body = try TemplateRenderer.render(builtIn + ".stencil", context: sharedContext, overrides: overrides)
+            } else {
+                throw ForgeError.invalidArguments("No template for '\(role)'.")
+            }
+            return GeneratedFile(url: url, content: header + body)
+        }
+
         var files: [GeneratedFile] = try type.templateSpecs(for: category)
             .filter { activeSelection.contains($0.file) }
             .map { spec in
-                let header  = try Templates.fileHeader(
-                    fileName: spec.file.fileName(for: feature.typeName),
-                    context: headerContext, overrides: templateDirectory
-                )
-                let body    = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
-                let layer   = spec.file.layer(for: type)
-                // "Root" files (like DependencyContainer) sit directly in sourcesRoot, others inside layer folder
-                let directory = layer == "Root"
-                    ? sourcesRoot
-                    : sourcesRoot.appendingPathComponent(layer, isDirectory: true)
-                return GeneratedFile(
-                    url: directory.appendingPathComponent(spec.file.fileName(for: feature.typeName)),
-                    content: header + body
-                )
+                let layer = spec.file.layer(for: type)
+                let directory = layer == "Root" ? sourcesRoot : sourcesRoot.appendingPathComponent(layer, isDirectory: true)
+                let url = directory.appendingPathComponent(spec.file.fileName(for: feature.typeName))
+                return try render(role: spec.file.rawValue, builtIn: spec.templateName, to: url)
             }
+        var tests = testSpecs.map { spec in
+            (role: spec.file.rawValue, builtIn: Optional(spec.templateName),
+             url: testsRoot.appendingPathComponent(spec.file.fileName(for: feature.typeName)))
+        }
+        for (role, file) in customRoles {
+            guard let output = file.output else { continue }
+            let path = try TemplateRenderer.renderSource(output,
+                context: ["name": feature.typeName, "propertyName": feature.propertyName], name: "stack.files.\(role).output")
+            guard StackConfig.isRelativePath(path) else {
+                throw ForgeError.invalidArguments("Invalid rendered output '\(path)' for '\(role)'. Use a relative Swift path.")
+            }
+            let root = file.isTest ? testsRoot : sourcesRoot
+            let url = root.appendingPathComponent(path)
+            guard resolvedPath(url).hasPrefix(resolvedPath(root) + "/") else {
+                throw ForgeError.invalidArguments("Output '\(url.path)' escapes the selected target directory.")
+            }
+            if file.isTest {
+                tests.append((role, nil, url))
+            } else {
+                files.append(try render(role: role, builtIn: nil, to: url))
+            }
+        }
 
         // Optionally generate Package.swift if --package was specified
         var createdSwiftPackage: URL?
@@ -244,13 +281,32 @@ struct FeatureGenerator {
                 "isConcurrency": binding == .concurrency,
                 "isSwiftTesting": testing == .swiftTesting,
                 "isFactory": di == .factory,
-            ], overrides: templateDirectory)
+            ], overrides: overrides)
             let packageUrl = featureRoot.appendingPathComponent("Package.swift")
             files.append(GeneratedFile(url: packageUrl, content: packageContent))
             createdSwiftPackage = featureRoot
         }
 
-        let testURLs = testSpecs.map { testsRoot.appendingPathComponent($0.file.fileName(for: feature.typeName)) }
+        let testURLs = tests.map(\.url)
+        if stack != nil {
+            var destinations: [String: URL] = [:]
+            for url in files.map(\.url) + testURLs {
+                let key = resolvedPath(url).precomposedStringWithCanonicalMapping.folding(options: .caseInsensitive, locale: nil)
+                if let conflicting = destinations[key] {
+                    throw ForgeError.invalidArguments("Output conflict between '\(conflicting.path)' and '\(url.path)'. Choose a unique output path in stack.files.")
+                }
+                destinations[key] = url
+            }
+            for (key, url) in destinations {
+                var parent = (key as NSString).deletingLastPathComponent
+                while parent != "/", !parent.isEmpty {
+                    if let conflicting = destinations[parent] {
+                        throw ForgeError.invalidArguments("Output '\(conflicting.path)' is a parent of '\(url.path)'. Choose a different stack output path.")
+                    }
+                    parent = (parent as NSString).deletingLastPathComponent
+                }
+            }
+        }
 
         // Check both destination files and the folders they need before writing anything.
         var checkedDirectories: Set<String> = []
@@ -273,13 +329,10 @@ struct FeatureGenerator {
 
         // Validate every selected override before Xcode may resolve dependencies while
         // reading build settings. The actual app module is substituted after planning.
-        for (spec, url) in zip(testSpecs, testURLs) {
-            _ = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: templateDirectory)
-            _ = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
-        }
+        let previewTests = try tests.map { try render(role: $0.role, builtIn: $0.builtIn, to: $0.url) }
 
         let packageUpdate: SwiftPackageIntegration.Update?
-        if !shouldCreatePackage, let packageTarget {
+        if !validationOnly, !shouldCreatePackage, let packageTarget {
             packageUpdate = try SwiftPackageIntegration.plan(
                 at: projectPath, target: packageTarget, tests: shouldGenerateTests, factory: di == .factory
             )
@@ -294,11 +347,9 @@ struct FeatureGenerator {
 
         if let moduleName = xcodeUpdate?.testModuleName {
             sharedContext["moduleName"] = moduleName
-        }
-        for (spec, url) in zip(testSpecs, testURLs) {
-            let header = try Templates.fileHeader(fileName: url.lastPathComponent, context: headerContext, overrides: templateDirectory)
-            let body = try TemplateRenderer.render("\(spec.templateName).stencil", context: sharedContext, overrides: templateDirectory)
-            files.append(GeneratedFile(url: url, content: header + body))
+            files += try tests.map { try render(role: $0.role, builtIn: $0.builtIn, to: $0.url) }
+        } else {
+            files += previewTests
         }
 
         if dryRun {

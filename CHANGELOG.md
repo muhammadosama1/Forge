@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Versioned team stacks in `.forge.yml`, with editable architecture defaults in `.templates/` and support for project-specific source and test files.
+- `forge validate` checks each enabled screen template and reports where to repair missing or duplicate form and list insertion points.
 - Independently configure the Xcode project and feature output directory with `paths.xcode_project` and `paths.features`.
 - Side-effect-free `forge make --dry-run`, with explicit deferral of Xcode test build-setting validation.
 - `forge templates list/export` and local per-template overrides under `.forge/templates`, with contract v1 and strict syntax/context validation.
@@ -10,6 +12,7 @@
 - Injectable async MVVM/MVI list/form behavior and generated tests for failures, retries, cancellation, and duplicate submissions.
 
 ### Changed
+- Interactive `forge init` asks for the project's architecture and enables the exported templates in one step. Scripts can pass an architecture flag, and existing projects with legacy overrides can adopt the new contract explicitly.
 - Clean live data sources require injected application operations; sample success data is now explicitly selected by preview/test construction.
 - Prioritize MVVM/MVI and local customization while preserving other architectures; document a balanced solo/team validation pilot.
 
