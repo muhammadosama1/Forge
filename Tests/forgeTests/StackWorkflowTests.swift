@@ -156,6 +156,28 @@ final class StackWorkflowTests: XCTestCase {
         try make("Login", ["-form"])
     }
 
+    func testValidationReportsIndependentSourceAndTestErrorsTogether() throws {
+        try initialize()
+        let config = root.appendingPathComponent(".forge.yml")
+        let starter = try String(contentsOf: config, encoding: .utf8)
+        try starter.replacingOccurrences(of: "  tests: false", with: "  tests: true")
+            .write(to: config, atomically: true, encoding: .utf8)
+
+        for role in ["view", "viewModel", "viewModelTests"] {
+            let url = root.appendingPathComponent(".templates/\(role).swift.stencil")
+            let source = try String(contentsOf: url, encoding: .utf8)
+            try (source + "\n{{ invalid\(role) }}").write(to: url, atomically: true, encoding: .utf8)
+        }
+        let original = try FileManager.default.subpathsOfDirectory(atPath: root.path).sorted()
+        XCTAssertThrowsError(try StackWorkflow.validate(arguments: ["validate", "--path", root.path])) { error in
+            let message = (error as? ForgeError)?.message ?? ""
+            for symbol in ["invalidview", "invalidviewModel", "invalidviewModelTests"] {
+                XCTAssertTrue(message.contains("unknown variable '\(symbol)'"), message)
+            }
+        }
+        XCTAssertEqual(try FileManager.default.subpathsOfDirectory(atPath: root.path).sorted(), original)
+    }
+
     func testValidationAndSetupRerunReportMissingInactiveTemplates() throws {
         try initialize()
         let testTemplate = root.appendingPathComponent(".templates/viewModelTests.swift.stencil")

@@ -51,9 +51,9 @@ Use `…InitializerParameters` without the comma when Forge supplies the first p
 
 ### Validate in CI
 
-If a required insertion point is inside a branch Forge skips, the error identifies the template, insertion point, affected screen, and the controlling condition. Move the insertion point to a shared position when every screen needs it, or add it to the branch that runs for that screen. Duplicate insertion points report both active locations.
+If a required insertion point is inside a branch Forge skips, the error identifies the template, insertion point, affected screen, and the controlling condition. Move the insertion point to a shared position when every screen needs it, or add it to the branch that runs for that screen. Duplicate insertion points report both active locations. Validation reports independent template errors together for each screen.
 
-Run `forge validate` from the project, or pass `--config path/to/team.yml`. It checks every configured template path and renders each enabled category with the configured defaults offline. Use `forge make … --dry-run` to check any additional flag combinations you use. Treat the check as a rendering and wiring check. Swift compilation is the next gate for custom code. A CI job can generate sample features into a disposable checkout of its host project and run the normal Xcode build and tests there.
+Run `forge validate` from the project, or pass `--config path/to/team.yml`. It checks every configured template path and renders each enabled category with the configured defaults offline. Use `forge make … --dry-run` to check any additional flag combinations you use. Treat the check as a rendering and wiring check. Swift compilation is the next gate for custom code. A CI job can generate sample features into a disposable checkout and run the host project’s normal Xcode build and tests. [Host CI workflow](WALKTHROUGH.md#adopt-the-stack-in-an-existing-ios-app)
 
 For self-contained templates, use a temporary directory and compile a generated package.
 

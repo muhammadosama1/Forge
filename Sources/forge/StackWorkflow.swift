@@ -163,7 +163,8 @@ enum StackWorkflow {
                 _ = try generator.generate(feature: feature, selection: .all(for: type), validationOnly: true)
                 print("Passed \(name) template rendering.")
             } catch {
-                failures.append("\(name): \((error as? ForgeError)?.message ?? error.localizedDescription)")
+                let details = (error as? ForgeError)?.message ?? error.localizedDescription
+                failures.append("\(name): \(details.replacingOccurrences(of: "\n", with: "\n  "))")
             }
         }
         if !failures.isEmpty {

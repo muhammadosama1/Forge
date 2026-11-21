@@ -241,13 +241,24 @@ struct FeatureGenerator {
             return GeneratedFile(url: url, content: header + body)
         }
 
+        var templateErrors: [String] = []
+        func renderForPreflight(role: String, builtIn: String?, to url: URL) throws -> GeneratedFile? {
+            do {
+                return try render(role: role, builtIn: builtIn, to: url)
+            } catch {
+                guard validationOnly else { throw error }
+                templateErrors.append((error as? ForgeError)?.message ?? error.localizedDescription)
+                return nil
+            }
+        }
+
         var files: [GeneratedFile] = try type.templateSpecs(for: category)
             .filter { activeSelection.contains($0.file) }
-            .map { spec in
+            .compactMap { spec in
                 let layer = spec.file.layer(for: type)
                 let directory = layer == "Root" ? sourcesRoot : sourcesRoot.appendingPathComponent(layer, isDirectory: true)
                 let url = directory.appendingPathComponent(spec.file.fileName(for: feature.typeName))
-                return try render(role: spec.file.rawValue, builtIn: spec.templateName, to: url)
+                return try renderForPreflight(role: spec.file.rawValue, builtIn: spec.templateName, to: url)
             }
         var tests = testSpecs.map { spec in
             (role: spec.file.rawValue, builtIn: Optional(spec.templateName),
@@ -267,8 +278,8 @@ struct FeatureGenerator {
             }
             if file.isTest {
                 tests.append((role, nil, url))
-            } else {
-                files.append(try render(role: role, builtIn: nil, to: url))
+            } else if let file = try renderForPreflight(role: role, builtIn: nil, to: url) {
+                files.append(file)
             }
         }
 
@@ -329,7 +340,10 @@ struct FeatureGenerator {
 
         // Validate every selected override before Xcode may resolve dependencies while
         // reading build settings. The actual app module is substituted after planning.
-        let previewTests = try tests.map { try render(role: $0.role, builtIn: $0.builtIn, to: $0.url) }
+        let previewTests = try tests.compactMap { try renderForPreflight(role: $0.role, builtIn: $0.builtIn, to: $0.url) }
+        if !templateErrors.isEmpty {
+            throw ForgeError.invalidArguments(templateErrors.joined(separator: "\n"))
+        }
 
         let packageUpdate: SwiftPackageIntegration.Update?
         if !validationOnly, !shouldCreatePackage, let packageTarget {

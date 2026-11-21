@@ -20,6 +20,12 @@
                                     BuildableName="SmokeTests.xctest" BlueprintName="SmokeTests"
                                     ReferencedContainer="container:Smoke.xcodeproj"/>
             </TestableReference>
+            <TestableReference skipped="NO">
+                <BuildableReference BuildableIdentifier="primary"
+                                    BlueprintIdentifier="A00000000000000000000018"
+                                    BuildableName="SmokeUITests.xctest" BlueprintName="SmokeUITests"
+                                    ReferencedContainer="container:Smoke.xcodeproj"/>
+            </TestableReference>
         </Testables>
     </TestAction>
 </Scheme>
