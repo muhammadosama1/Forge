@@ -8,15 +8,16 @@
             isa = PBXProject;
             attributes = { TargetAttributes = {
                 A00000000000000000000004 = { TestTargetID = A00000000000000000000003; };
+                A00000000000000000000018 = { TestTargetID = A00000000000000000000003; };
             }; };
             buildConfigurationList = A00000000000000000000010;
             mainGroup = A00000000000000000000002;
             productRefGroup = A00000000000000000000005;
-            targets = (A00000000000000000000003, A00000000000000000000004);
+            targets = (A00000000000000000000003, A00000000000000000000004, A00000000000000000000018);
         };
         A00000000000000000000002 = {
             isa = PBXGroup;
-            children = (A00000000000000000000006, A00000000000000000000007, A00000000000000000000005);
+            children = (A00000000000000000000006, A00000000000000000000007, A00000000000000000000019, A00000000000000000000005);
             sourceTree = "<group>";
         };
         A00000000000000000000003 = {
@@ -39,7 +40,7 @@
         A00000000000000000000005 = {
             isa = PBXGroup;
             name = Products;
-            children = (A00000000000000000000008, A00000000000000000000009);
+            children = (A00000000000000000000008, A00000000000000000000009, A0000000000000000000001A);
             sourceTree = "<group>";
         };
         A00000000000000000000006 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeApp.swift; sourceTree = "<group>"; };
@@ -91,6 +92,30 @@
                 TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SmokeApp.app/SmokeApp";
             };
         };
+
+        A00000000000000000000018 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A0000000000000000000001D;
+            buildPhases = (A0000000000000000000001C);
+            dependencies = (A0000000000000000000001F);
+            name = SmokeUITests;
+            productReference = A0000000000000000000001A;
+            productType = "com.apple.product-type.bundle.ui-testing";
+        };
+        A00000000000000000000019 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeUITests.swift; sourceTree = "<group>"; };
+        A0000000000000000000001A = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = SmokeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        A0000000000000000000001B = { isa = PBXBuildFile; fileRef = A00000000000000000000019; };
+        A0000000000000000000001C = { isa = PBXSourcesBuildPhase; files = (A0000000000000000000001B); };
+        A0000000000000000000001D = { isa = XCConfigurationList; buildConfigurations = (A0000000000000000000001E); defaultConfigurationName = Debug; };
+        A0000000000000000000001E = {
+            isa = XCBuildConfiguration;
+            name = Debug;
+            buildSettings = {
+                PRODUCT_BUNDLE_IDENTIFIER = org.forge.smoke.uitests;
+                TEST_TARGET_NAME = SmokeApp;
+            };
+        };
+        A0000000000000000000001F = { isa = PBXTargetDependency; target = A00000000000000000000003; targetProxy = A0000000000000000000000E; };
     };
     rootObject = A00000000000000000000001;
 }

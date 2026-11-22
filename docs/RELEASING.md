@@ -6,7 +6,7 @@ Run the release gate on macOS with Swift 6.2 or newer and Python 3. Choose the i
 make release-check VERSION=2.0.0
 ```
 
-The command stamps the ignored `Sources/forge/Version.swift`, builds the release binary, runs Forge's unit tests, exercises CLI workflows from a temporary user's project, then builds and tests two 45-case generated architecture/layer/layout matrices: the defaults and a combined Observation, Swift Testing, and Factory configuration. The smoke test covers local installation, `init`, project configuration, CLI overrides, naming rules and module imports, a standalone package using Observation and Swift Testing, an existing package that builds and runs generated tests with Factory, repeat generation, and errors that must leave no partial feature files. It also checks that `forge --version` matches `VERSION`.
+The command stamps the ignored `Sources/forge/Version.swift`, builds the release binary, runs Forge's unit tests, exercises CLI workflows from a temporary user's project, then builds and tests two 45-case generated architecture/layer/layout matrices: the defaults and a combined Observation, Swift Testing, and Factory configuration. The smoke test covers local installation, `init`, project configuration, CLI overrides, naming rules and module imports, a standalone package using Observation and Swift Testing, an existing package that builds and runs generated tests with Factory, repeat generation, and errors that must leave no partial feature files. It also builds and tests the editable stack matrix, including the customized MVVM reference stack. The smoke test checks that `forge --version` matches `VERSION`.
 
 `Scripts/release-smoke.py` can be run against an already built binary while investigating a failure:
 

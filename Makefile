@@ -24,6 +24,7 @@ release-check: build
 	python3 Scripts/release-smoke.py --forge .build/release/forge --expected-version "$(VERSION)"
 	python3 Scripts/verify-generated.py --forge .build/release/forge --jobs 4
 	python3 Scripts/verify-generated.py --forge .build/release/forge --jobs 4 --binding concurrency --testing swift-testing --di factory --logs-dir .build/generated-verification-advanced
+	python3 Scripts/verify-generated.py --forge .build/release/forge --stack --jobs 4 --logs-dir .build/stack-verification
 
 install: build
 	install -d "$(INSTALL_DIR)"

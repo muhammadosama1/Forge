@@ -1,4 +1,69 @@
-# Local templates (contract v1)
+# Local templates
+
+## Editable stacks
+
+Run `forge init` in the project root and choose MVVM, MVI, VIPER, VIP, or MVP. Forge creates `.forge.yml` and the selected architecture's templates in a sibling `.templates/` directory. For scripts, use an architecture flag such as `forge init -mvvm`. Commit both paths. Generate a feature immediately with `forge make Profile -form`.
+
+Existing projects can run setup with their configured architecture. If the project already has overrides under `.forge/templates/`, run `forge init --adopt` to activate editable stacks and keep the legacy files available for reference. Port any team edits to the new templates. Running setup again in an initialized project points to validation and preserves your edits.
+
+### Add files to your stack
+
+Add the following roles under the existing `stack.files` mapping and place the referenced files in `.templates/`.
+
+```yaml
+    coordinator:
+      template: coordinator.swift.stencil
+      output: "Navigation/{{ name }}Coordinator.swift"
+      target: source
+    teamTests:
+      template: teamTests.swift.stencil
+      output: "Team/{{ name }}TeamTests.swift"
+      target: test
+```
+
+Built-in roles accept a `template` path and retain their standard Swift destination and target. Team roles use relative `.swift` output paths beneath the feature's source or test destination. Output paths accept `{{ name }}` and `{{ propertyName }}`. Test roles are included when generation enables tests. Set individual keys under `stack.categories` to `false` to disable `default`, `form`, or `list`. The stack's architecture is the top-level `architecture` setting. For a separate stack, select a different configuration with `--config`.
+
+### Preserve form and list behavior
+
+Keep the active insertion points when editing templates. The same ViewModel or store template is used for all categories.
+
+| Template | Insertion points |
+|---|---|
+| MVVM ViewModel | `forge.viewModelProperties`, `forge.viewModelInitializers`, and `forge.viewModelActions` inside the class. Keep `forge.viewModelTypes` after it. |
+| MVI store | `forge.storeProperties`, `forge.storeInitializers`, and `forge.storeActions` inside the class. Keep `forge.storeTypes` after it. |
+| MVVM or MVI form view | `forge.field1Binding` and `forge.field2Binding`, one per field. |
+| MVVM or MVI list view | `forge.listItems` as the collection passed to the list. |
+
+For example, change the default control to `ShopTextField(title: "Name", text: {{ forge.field1Binding }})`. The host target supplies `ShopTextField`. You can add team-owned properties, methods, and convenience initializers around the generated members. Update `dependencyContainer.swift.stencil` and any team preview/test construction paths when they need to supply a new dependency. The compiled MVVM example adds a coordinator to both the live dependency container and the isolated preview. It also supplies a custom text field and row, and connects a team operation through the Clean remote data source. Its tests use the generated factory to check dependency injection, submission, and list retry. [Generated package verification script](../Scripts/verify-generated.py)
+
+To own the designated initializer, replace the `…Initializers` block with your own signature and body. For example, this MVVM initializer accepts a team dependency alongside the managed parameters.
+
+```swift
+    private let analytics: ShopAnalytics
+
+    init(analytics: ShopAnalytics{{ forge.viewModelInitializerParametersAfterComma }}) {
+        self.analytics = analytics
+        {{ forge.viewModelInitializerAssignments }}
+    }
+```
+
+Use `…InitializerParameters` without the comma when Forge supplies the first parameter. Both parameter insertion points expand to empty text when a variant has no managed parameters. The assignments block follows the indentation of its insertion point. Update the team’s live dependency container, previews, tests, and any convenience initializers when they need to supply a new required argument. Projects exported with the earlier `…Members` block can keep it or adopt the separate insertion points.
+
+### Validate in CI
+
+If a required insertion point is inside a branch Forge skips, the error identifies the template, insertion point, affected screen, and the controlling condition. Move the insertion point to a shared position when every screen needs it, or add it to the branch that runs for that screen. Duplicate insertion points report both active locations. Validation reports independent template errors together for each screen.
+
+Run `forge validate` from the project, or pass `--config path/to/team.yml`. It checks every configured template path and renders each enabled category with the configured defaults offline. Use `forge make … --dry-run` to check any additional flag combinations you use. Treat the check as a rendering and wiring check. Swift compilation is the next gate for custom code. A CI job can generate sample features into a disposable checkout and run the host project’s normal Xcode build and tests. [Host CI workflow](WALKTHROUGH.md#adopt-the-stack-in-an-existing-ios-app)
+
+For self-contained templates, use a temporary directory and compile a generated package.
+
+```sh
+fixture="$(mktemp -d)"
+forge make ForgeSample -form --config .forge.yml --path "$fixture" --package --tests
+swift test --package-path "$fixture/ForgeSample"
+```
+
+## Legacy overrides (contract v1)
 
 Forge supports project-local overrides of individual built-in templates. The rest of the feature keeps using Forge's defaults. Overrides contain text, not executable scripts; Forge owns output filenames and destinations.
 

@@ -119,7 +119,11 @@ enum Terminal {
     /// - Parameter title: Prompt text displayed above the list.
     /// - Parameter options: Items to choose from.
     /// - Throws: `ForgeError.cancelled` if the user presses Ctrl+C or 'q'.
-    static func promptSelection<T: CustomStringConvertible>(title: String, options: [T]) throws -> T {
+    static func promptSelection<T: CustomStringConvertible>(
+        title: String,
+        options: [T],
+        describe: (T) -> String = { $0.description }
+    ) throws -> T {
         var cursorIndex = 0
         let totalLines = options.count + 2
 
@@ -138,7 +142,7 @@ enum Terminal {
 
                 for (index, option) in options.enumerated() {
                     let cursor = index == cursorIndex ? ">" : " "
-                    print("  \(cursor) \(option.description)")
+                    print("  \(cursor) \(describe(option))")
                 }
 
                 fflush(stdout)

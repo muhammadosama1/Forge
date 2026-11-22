@@ -88,10 +88,12 @@ Choose a UI starting point. MVVM/MVI include injectable async operations, visibl
 
 Commit a `.forge.yml` file to the root of your repository to establish generation defaults for your team. Forge does not lint or enforce conventions in existing code. When present, running `forge make <Feature>` automatically adopts your team's architecture, naming, paths, and flags without manual flags or terminal prompts.
 
-Generate a starter configuration with:
+Run `forge init` in the project root and choose the architecture. Forge creates `.forge.yml` and activates the editable defaults in `.templates/`. For unattended setup, pass an architecture flag.
 
 ```sh
 forge init
+# Unattended setup with editable templates
+forge init -mvvm
 ```
 
 Example `.forge.yml`:
@@ -132,7 +134,11 @@ naming:
   strip_redundant_prefix: true  # Prevent 'AppAppLogin' when prefix is 'App'
 ```
 
-### Local template customization and previewing changes
+### Team stacks and editable templates
+
+After setup, run `forge make Profile -form` to try the defaults. Edit `.templates/` to adapt the Swift, and add team-specific roles under `stack.files` in `.forge.yml`. An MVVM stack uses the same ViewModel template for default screens, forms, and lists. `forge validate` renders each enabled category and checks its insertion points before you build the generated Swift in your project. See the [editable stack contract and adoption guide](docs/TEMPLATES.md#editable-stacks).
+
+### Legacy overrides and previewing changes
 
 ```sh
 forge templates list

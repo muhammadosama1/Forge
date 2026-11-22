@@ -33,6 +33,41 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Profile").path))
     }
 
+    func testMalformedCustomStackTestStopsXcodeIntegrationBeforeReadingSettings() throws {
+        try installUnitTestTarget()
+        try configureFactory()
+        try Command.runInit(arguments: ["init", "-mvvm", "--path", root.path])
+        let config = root.appendingPathComponent(".forge.yml")
+        let starter = try String(contentsOf: config, encoding: .utf8)
+        try (starter + """
+
+            teamTests:
+              template: teamTests.stencil
+              output: "Team/{{ name }}Tests.swift"
+              target: test
+
+        """).write(to: config, atomically: true, encoding: .utf8)
+        try "{{ unknownTeamSymbol }}".write(to: root.appendingPathComponent(".templates/teamTests.stencil"),
+                                             atomically: true, encoding: .utf8)
+        let original = try Data(contentsOf: projectFile)
+        let arguments = ["make", "Profile", "--path", root.path]
+        let withTests = try Command.parse(arguments: arguments + ["--tests", "--xcode-target", "Demo App"])
+        XCTAssertThrowsError(try withTests.run { _, _, _, _ in
+            XCTFail("Invalid stack test templates must fail before reading Xcode settings")
+            return [:]
+        }) { error in
+            XCTAssertTrue((error as? ForgeError)?.message.contains("unknownTeamSymbol") == true)
+        }
+        let feature = root.appendingPathComponent("Profile")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: feature.path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+
+        try Command.parse(arguments: arguments + ["--files-only", "--no-tests"]).run()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: feature.appendingPathComponent("Presentation/ProfileViewModel.swift").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: feature.appendingPathComponent("Tests").path))
+        XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
     func testDryRunDoesNotResolveBuildSettingsOrChangeProject() throws {
         try installUnitTestTarget()
         try configureFactory()
@@ -443,6 +478,23 @@ final class XcodeProjectIntegrationTests: XCTestCase {
         let entries = try XCTUnwrap(FileManager.default.enumerator(atPath: feature.path)).allObjects as? [String]
         XCTAssertEqual(Set(entries ?? []), ["Presentation", "Tests"])
         XCTAssertEqual(try Data(contentsOf: projectFile), original)
+    }
+
+    func testConcurrentStackSetupLeavesACompleteStackAndPreservesTheProject() throws {
+        let projectBefore = try Data(contentsOf: projectFile)
+        let results = try runConcurrently(Array(repeating: ["init", "-mvvm", "--path", root.path], count: 8))
+        XCTAssertTrue(results.contains { $0.status == 0 })
+        for result in results where result.status != 0 {
+            XCTAssertTrue(result.error.contains("The configuration changed during setup"), result.error)
+        }
+        let starter = StackTemplates.starter(for: .mvvm)
+        let templates = root.appendingPathComponent(".templates")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: templates.path)), Set(starter.keys))
+        for (file, content) in starter {
+            XCTAssertEqual(try String(contentsOf: templates.appendingPathComponent(file), encoding: .utf8), content)
+        }
+        try StackWorkflow.validate(arguments: ["validate", "--path", root.path])
+        XCTAssertEqual(try Data(contentsOf: projectFile), projectBefore)
     }
 
     func testConcurrentDistinctFeaturesKeepEverySourceAndMembership() throws {

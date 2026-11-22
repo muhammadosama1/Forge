@@ -83,6 +83,21 @@ flags:
                 "CLI negative flags did not override project defaults")
         print("PASS configured generation and CLI overrides", flush=True)
 
+        stack = root / "Editable Stack"
+        run([forge, "init", "-mvvm", "--path", stack])
+        model = stack / ".templates/viewModel.swift.stencil"
+        require(model.is_file(), "Architecture setup did not export editable templates")
+        editable = model.read_text()
+        model.write_text(editable.replace("{{ forge.viewModelProperties }}",
+                                         "    let teamLabel = \"Team\"\n{{ forge.viewModelProperties }}"))
+        run([forge, "init", "-mvvm", "--path", stack])
+        run([forge, "validate", "--path", stack])
+        for name, category in (("Login", "-form"), ("Orders", "-list")):
+            run([forge, "make", name, category, "--path", stack])
+            generated = stack / name / "Presentation" / f"{name}ViewModel.swift"
+            require('let teamLabel = "Team"' in generated.read_text(), f"Team edit missing in {category}")
+        print("PASS editable stack setup, rerun, and validation", flush=True)
+
         standalone = root / "Standalone"
         standalone.mkdir()
         (standalone / ".forge.yml").write_text("""architecture: mvvm

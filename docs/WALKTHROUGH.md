@@ -30,7 +30,39 @@ Add `import Foundation` to that file. Replace the example URL with your service.
 
 Run `swift test --package-path Profile` again. Generated tests exercise preview fixtures and repository behavior, so add tests for your API decoding and failure cases as you implement them. In an app that links the package, use `import Profile` and display `ProfileFeature.makeView()` from a SwiftUI view.
 
-## Adapt conventions
+## Make the templates your own
+
+In a project you want to customize, run `forge init` and choose MVVM, or run `forge init -mvvm` in a script. Setup writes the configuration and the editable templates side by side. Commit both so the team shares the same defaults.
+
+1. In `.templates/viewModel.swift.stencil`, add `let analyticsScreen = "{{ name }}"` inside the class, just before `{{ forge.viewModelProperties }}`.
+2. In `.templates/view.swift.stencil`, replace the first form field's display label with a label of your choice. Keep `{{ forge.field1Binding }}` as the text binding. Make the same label edit in any other form branches you use.
+3. Run `forge validate`, then generate a form and a list. Both include the ViewModel property. The form still binds its fields and the list still displays the model's collection.
+
+```sh
+forge validate
+forge make EditProfile -form
+forge make Orders -list
+```
+
+To try the repair workflow, wrap `{{ forge.viewModelProperties }}` in an `if isList` block and run `forge validate`. Forge points to the condition that skipped the marker for the form. Move the marker back to the shared ViewModel body and run validation again.
+
+## Adopt the stack in an existing iOS app
+
+1. In a disposable checkout, run `forge init -mvvm` from the directory containing your app project. If the project uses legacy overrides, review them and pass `--adopt` explicitly. Set `paths.xcode_project`, `paths.xcode_target`, or `paths.xcode_test_target` in `.forge.yml` when Forge needs help choosing a destination.
+2. In `.templates/viewModel.swift.stencil`, add your team dependency with the [custom initializer insertion points](TEMPLATES.md#preserve-form-and-list-behavior). Supply the dependency from `dependencyContainer.swift.stencil` in both the live factory and the isolated preview. Use your host app's SwiftUI controls in `view.swift.stencil` and pass them Forge's existing bindings.
+3. In CI, validate and generate in the disposable checkout. Use the app's normal scheme and simulator destination so Swift checks the actual host dependencies and target membership.
+
+```sh
+forge validate
+forge make ForgeSampleForm -form --tests
+forge make ForgeSampleList -list --tests
+xcodebuild test -project MyApp.xcodeproj -scheme MyApp \
+  -destination "platform=iOS Simulator,id=$SIMULATOR_UDID"
+```
+
+The Xcode fixture in Forge's CI follows this workflow. It repairs a skipped form insertion point, generates both screens, and verifies submission and list retry through the host UI. [Xcode smoke fixture](../Scripts/xcode-smoke.py)
+
+## Export a legacy override
 
 To customize future generated ViewModels, export the built-in template:
 
