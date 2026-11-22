@@ -53,7 +53,7 @@ enum TemplateRenderer {
 
     static func renderSource(_ raw: String, context: [String: Any], name: String,
                              required: Set<String> = [], layouts: [Set<String>] = [], category: String? = nil) throws -> String {
-        let regex = try NSRegularExpression(pattern: #"\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}"#)
+        let regex = try NSRegularExpression(pattern: #"\{\{(?:(?!\{[\{%])[\s\S])*?\}\}|\{%(?:(?!\{[\{%])[\s\S])*?%\}"#)
         var result = ""
         var cursor = raw.startIndex
         var stack: [ConditionalBranch] = []
@@ -67,8 +67,10 @@ enum TemplateRenderer {
             .invalidArguments("\(name):\(line): \(detail)")
         }
         func appendLiteral(_ literal: Substring) throws {
-            guard !literal.contains("{{"), !literal.contains("{%") else {
-                throw invalid("unterminated template tag")
+            if let opening = literal.range(of: #"\{[\{%]"#, options: .regularExpression) {
+                line += literal[..<opening.lowerBound].filter(\.isNewline).count
+                let closing = literal[opening] == "{{" ? "}}" : "%}"
+                throw invalid("unterminated template tag. Forge cannot render this template. Close the tag with '\(closing)'.")
             }
             if active { result += literal }
         }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.2.0] - 2026-11-22
+
 ### Added
 - Versioned team stacks in `.forge.yml`, with editable architecture defaults in `.templates/` and support for project-specific source and test files.
 - `forge validate` checks each enabled screen template and reports where to repair missing or duplicate form and list insertion points.
@@ -16,13 +18,20 @@
 - Clean live data sources require injected application operations; sample success data is now explicitly selected by preview/test construction.
 - Prioritize MVVM/MVI and local customization while preserving other architectures; document a balanced solo/team validation pilot.
 
-- Register generated Swift sources with an existing Xcode app target. Forge selects a sole app target automatically, accepts a target from `--xcode-target` or `.forge.yml`, and supports `--files-only` for manual wiring.
-- Register generated tests with an existing app-hosted Xcode unit-test target and import the app's resolved Swift module. Select a target with `--xcode-test-target` or `paths.xcode_test_target` when needed.
 - Generate directly into dedicated Xcode synchronized app and test folders and let Xcode manage target membership.
 - Link the Factory Swift package product to existing Xcode app targets when `di: factory` is selected.
 
 ### Fixed
+- Report the opening line and required closing delimiter for unterminated template tags.
 - Propagate Clean VIPER loading failures instead of returning fake sample success, and handle cancellation separately in generated async loading paths.
+
+## [2.1.0] - 2026-11-14
+
+### Added
+- Register generated Swift sources with an existing Xcode app target. Forge selects a sole app target automatically, accepts a target from `--xcode-target` or `.forge.yml`, and supports `--files-only` for manual wiring.
+- Register generated tests with an existing app-hosted Xcode unit-test target and import the app's resolved Swift module. Select a target with `--xcode-test-target` or `paths.xcode_test_target` when needed.
+
+### Fixed
 - Report actionable errors for missing or ambiguous targets, invalid configuration, missing architecture in scripts, and blocked output paths before writing feature files.
 
 ## [2.0.0] - 2026-11-09

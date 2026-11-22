@@ -2,6 +2,20 @@ import XCTest
 @testable import forge
 
 final class TemplateDiagnosticTests: XCTestCase {
+    func testUnterminatedTagIdentifiesOpeningLineAndClosingDelimiter() {
+        for (opening, closing) in [("{{", "}}"), ("{%", "%}")] {
+            for suffix in ["", "\n{{ name }}\n{% if yes %}{% endif %}"] {
+                let raw = "{{ name }}\nSwift code\n\n\(opening) unfinished" + suffix
+                XCTAssertThrowsError(try TemplateRenderer.renderSource(raw, context: ["name": "Profile", "yes": true],
+                                                                      name: "View.stencil")) { error in
+                    let message = (error as? ForgeError)?.message ?? ""
+                    XCTAssertTrue(message.contains("View.stencil:4: unterminated template tag"), message)
+                    XCTAssertTrue(message.contains("Close the tag with '\(closing)'"), message)
+                }
+            }
+        }
+    }
+
     func testMissingInsertionNamesOuterBlockWhenNestedConditionsAlsoFail() throws {
         let raw = """
         imports
