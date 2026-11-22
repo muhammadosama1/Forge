@@ -429,9 +429,16 @@ struct XcodeProjectIntegration {
                 let finished = DispatchSemaphore(value: 0)
                 process.terminationHandler = { _ in finished.signal() }
                 try process.run()
-                guard finished.wait(timeout: .now() + (allowsPackageResolution ? 120 : 60)) == .success else {
+                let timeoutSeconds = allowsPackageResolution ? 300 : 180
+                guard finished.wait(timeout: .now() + .seconds(timeoutSeconds)) == .success else {
                     if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    throw ForgeError.invalidArguments("xcodebuild timed out while reading build settings for \(context).")
+                    _ = finished.wait(timeout: .now() + .seconds(5))
+                    let diagnostic = (try? String(contentsOf: stderr, encoding: .utf8))?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let detail = diagnostic.isEmpty ? "" : " " + String(diagnostic.suffix(2000))
+                    throw ForgeError.invalidArguments(
+                        "xcodebuild timed out after \(timeoutSeconds) seconds while reading build settings for \(context). Check Xcode and package resolution, then retry.\(detail)"
+                    )
                 }
                 let diagnostic = try String(contentsOf: stderr, encoding: .utf8)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
