@@ -159,7 +159,11 @@ final class ProjectConfigTests: XCTestCase {
         architecture: invalid_arch
         """
         let dict = try YAMLParser.parse(yaml)
-        XCTAssertThrowsError(try ProjectConfig(from: dict))
+        XCTAssertThrowsError(try ProjectConfig(from: dict)) { error in
+            guard case ForgeError.invalidArguments(let message) = error else { return XCTFail("Unexpected error") }
+            XCTAssertTrue(message.contains("Valid options"))
+            XCTAssertFalse(message.contains("invalid_arch"))
+        }
     }
 
     func testProjectConfigUnknownTopLevelKeyThrows() throws {
@@ -597,7 +601,7 @@ final class ProjectConfigTests: XCTestCase {
                 return XCTFail("Expected invalidArguments, got \(error)")
             }
             XCTAssertTrue(msg.contains("Invalid binding"))
-            XCTAssertTrue(msg.contains("reactive_swift"))
+            XCTAssertFalse(msg.contains("reactive_swift"))
         }
     }
 
@@ -753,7 +757,7 @@ final class ProjectConfigTests: XCTestCase {
                 return XCTFail("Expected invalidArguments, got \(error)")
             }
             XCTAssertTrue(msg.contains("Invalid testing framework"))
-            XCTAssertTrue(msg.contains("quick_nimble"))
+            XCTAssertFalse(msg.contains("quick_nimble"))
         }
     }
 
@@ -888,7 +892,8 @@ final class ProjectConfigTests: XCTestCase {
             guard case ForgeError.invalidArguments(let msg) = error else {
                 return XCTFail("Expected invalidArguments, got \(error)")
             }
-            XCTAssertTrue(msg.contains("Invalid dependency injection strategy 'swinject'"))
+            XCTAssertTrue(msg.contains("Invalid dependency injection strategy"))
+            XCTAssertFalse(msg.contains("swinject"))
         }
     }
 

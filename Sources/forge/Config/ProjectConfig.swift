@@ -59,7 +59,7 @@ struct ProjectConfig: Equatable {
             }
             guard let arch = PresentationArchitecture.from(flag: rawArch) else {
                 let valid = PresentationArchitecture.allCases.map(\.rawValue).joined(separator: ", ")
-                throw ForgeError.invalidArguments("Invalid architecture '\(rawArch)' in .forge.yml. Valid options: \(valid)")
+                throw ForgeError.invalidArguments("Invalid architecture in .forge.yml. Valid options: \(valid)")
             }
             self.architecture = arch
         } else {
@@ -80,7 +80,7 @@ struct ProjectConfig: Equatable {
             }
             guard let strategy = BindingStrategy.from(string: rawStr) else {
                 let valid = BindingStrategy.allCases.map(\.rawValue).joined(separator: ", ")
-                throw ForgeError.invalidArguments("Invalid binding '\(rawStr)' in .forge.yml. Valid options: \(valid)")
+                throw ForgeError.invalidArguments("Invalid binding in .forge.yml. Valid options: \(valid)")
             }
             self.binding = strategy
         } else {
@@ -94,7 +94,7 @@ struct ProjectConfig: Equatable {
             }
             guard let framework = TestFramework.from(string: rawStr) else {
                 let valid = TestFramework.allCases.map(\.rawValue).joined(separator: ", ")
-                throw ForgeError.invalidArguments("Invalid testing framework '\(rawStr)' in .forge.yml. Valid options: \(valid)")
+                throw ForgeError.invalidArguments("Invalid testing framework in .forge.yml. Valid options: \(valid)")
             }
             self.testing = framework
         } else {
@@ -108,7 +108,7 @@ struct ProjectConfig: Equatable {
             }
             guard let strategy = DependencyInjectionStrategy.from(string: rawStr) else {
                 let valid = DependencyInjectionStrategy.allCases.map(\.rawValue).joined(separator: ", ")
-                throw ForgeError.invalidArguments("Invalid dependency injection strategy '\(rawStr)' in .forge.yml. Valid options: \(valid)")
+                throw ForgeError.invalidArguments("Invalid dependency injection strategy (di) in .forge.yml. Valid options: \(valid)")
             }
             self.di = strategy
         } else {

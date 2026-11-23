@@ -12,9 +12,6 @@ enum TemplateContent {
         "fileHeader.stencil": """
 //
 //  {{ fileName }}
-//  {{ projectName }}
-//
-//  Created by {{ authorName }} on {{ createdDate }}.
 //
 
 """,
