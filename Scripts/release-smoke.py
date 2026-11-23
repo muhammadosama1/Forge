@@ -2,6 +2,7 @@
 """Exercise a built Forge binary through realistic CLI workflows."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 import subprocess
@@ -98,12 +99,37 @@ flags:
             require('let teamLabel = "Team"' in generated.read_text(), f"Team edit missing in {category}")
         print("PASS editable stack setup, rerun, and validation", flush=True)
 
+        # Concurrent requests for the same feature should publish one complete result.
+        command = [forge, "make", "SharedInbox", "-list", "--path", stack]
+        plan = run([*command, "--dry-run"])
+        require(not (stack / "SharedInbox").exists(), "Preview wrote the feature")
+        with ThreadPoolExecutor(max_workers=4) as workers:
+            results = list(workers.map(
+                lambda _: subprocess.run(command, text=True, capture_output=True, timeout=60),
+                range(4),
+            ))
+        winners = [r for r in results if r.returncode == 0]
+        require(len(winners) == 1 and all("overwrite" in r.stderr.lower()
+                for r in results if r.returncode), "Concurrent writes did not produce one winner")
+        model_path = "SharedInbox/Presentation/SharedInboxViewModel.swift"
+        for summary in (plan, winners[0].stdout):
+            require(str(stack) not in summary and f"  + {model_path}" in summary,
+                    "Generation summary should show project-relative paths")
+        model_text = (stack / model_path).read_text()
+        require('let teamLabel = "Team"' in model_text, "Concurrent generation lost the template edit")
+        require("Created by " not in model_text and stack.name not in model_text,
+                "Default header exposed local author or project metadata")
+        print("PASS concurrent generation, relative summaries, and private default headers", flush=True)
+
         standalone = root / "Standalone"
         standalone.mkdir()
         (standalone / ".forge.yml").write_text("""architecture: mvvm
 binding: concurrency
 testing: swift-testing
 """)
+        package_plan = run([forge, "make", "Catalog", "-list", "--package", "--tests", "--dry-run"], cwd=standalone)
+        require("New package: Catalog" in package_plan.splitlines() and str(standalone) not in package_plan,
+                "Package preview exposed the temporary project path")
         run([forge, "make", "Catalog", "-list", "--package", "--tests", "--path", standalone])
         package_root = standalone / "Catalog"
         require((package_root / "Package.swift").is_file(), "Standalone package manifest is missing")

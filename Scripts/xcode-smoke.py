@@ -79,9 +79,9 @@ def smoke(forge, destination, root, *, synchronized):
     planned_feature = project / features / "SmokeXCTest"
     planned_tests = project / "Tests" / "SmokeXCTest" if synchronized else planned_feature / "Tests"
     plan = run([*args, "--dry-run"], nested)
-    selected_projects = [Path(line.removeprefix("Xcode project: ")).resolve()
+    selected_projects = [(workspace / line.removeprefix("Xcode project: ")).resolve()
                          for line in plan.splitlines() if line.startswith("Xcode project: ")]
-    planned_files = {Path(line[4:]).resolve() for line in plan.splitlines() if line.startswith("  + ")}
+    planned_files = {(workspace / line[4:]).resolve() for line in plan.splitlines() if line.startswith("  + ")}
     if (selected_projects != [project_file.parent]
             or planned_feature / "Presentation" / "SmokeXCTestViewModel.swift" not in planned_files
             or planned_tests / "SmokeXCTestViewModelTests.swift" not in planned_files

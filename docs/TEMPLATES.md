@@ -103,7 +103,7 @@ Feature source and test templates receive:
 
 All known boolean keys default to false. `hasTests` describes the standalone package manifest's test target; it is not a source-selection flag.
 
-`fileHeader.stencil` receives `fileName`, `projectName`, `authorName`, and `createdDate`. `swiftPackage.stencil` receives `name` (the package target name), `hasTests`, `isConcurrency`, `isSwiftTesting`, and `isFactory`. Do not use feature-only string values in these infrastructure templates.
+The default file header contains only the filename. A custom `fileHeader.stencil` receives `fileName`, `projectName`, `authorName`, and `createdDate`. `swiftPackage.stencil` receives `name` (the package target name), `hasTests`, `isConcurrency`, `isSwiftTesting`, and `isFactory`. Do not use feature-only string values in these infrastructure templates.
 
 ## Compatibility and responsibility
 
@@ -112,6 +112,8 @@ The contract version describes syntax and context, not a guarantee that arbitrar
 Forge validates rendering and destinations, but does not typecheck custom templates on every invocation. Build and test a generated fixture with your supported configuration combinations in CI. Keep your Forge version pinned; review exported built-ins when upgrading. A contract change requires explicit migration rather than silently rewriting overrides.
 
 ## Dry runs
+
+Generation and dry-run summaries show paths relative to the configuration directory, or the selected project directory when there is no configuration.
 
 `forge make ... --dry-run` resolves configuration, renders selected templates, checks conflicts and supported project structure, and lists planned file/project/manifest changes. It never writes output, acquires a generation lock, runs `xcodebuild`, or resolves dependencies.
 

@@ -543,14 +543,21 @@ struct Command {
         let result = try generator.generate(feature: feature, selection: resolvedSelection, readXcodeBuildSettings: readXcodeBuildSettings)
 
         // Output summary of created files
+        let base = (resolvedPath(configRoot) as NSString).pathComponents
+        func displayPath(_ url: URL) -> String {
+            let destination = (resolvedPath(url) as NSString).pathComponents
+            let shared = zip(base, destination).prefix { $0 == $1 }.count
+            let components = Array(repeating: "..", count: base.count - shared) + destination.dropFirst(shared)
+            return components.isEmpty ? "." : components.joined(separator: "/")
+        }
         if let configURL = loadedConfigURL {
             print("Using standards from \(configURL.lastPathComponent)")
         }
         print("\(dryRun ? "Planned" : "Created") \(type.displayName) feature: \(feature.typeName)")
         if dryRun {
-            print("Output: \((featureDirectory ?? projectPath).path); category: \(category?.rawValue ?? "default"); layers: \(shouldSkipDomain ? "data only" : (type.hasCleanLayers ? "clean" : "presentation"))")
+            print("Output: \(displayPath(featureDirectory ?? projectPath)); category: \(category?.rawValue ?? "default"); layers: \(shouldSkipDomain ? "data only" : (type.hasCleanLayers ? "clean" : "presentation"))")
             if let target = result.detectedSwiftPackageTarget { print("Package target: \(target)") }
-            if let package = result.createdSwiftPackage { print("New package: \(package.path)") }
+            if let package = result.createdSwiftPackage { print("New package: \(displayPath(package))") }
             print("Binding: \(binding.rawValue); tests: \(shouldGenerateTests ? testing.rawValue : "off"); DI: \(di.rawValue)")
             if di == .factory { print("Factory dependency: add if absent; preserve compatible existing requirements.") }
             if result.registeredXcodeTestTarget != nil {
@@ -558,12 +565,12 @@ struct Command {
             }
         }
         for file in result.createdFiles {
-            print("  \(dryRun && FileManager.default.fileExists(atPath: file.path) ? "~" : "+") \(file.path)")
+            print("  \(dryRun && FileManager.default.fileExists(atPath: file.path) ? "~" : "+") \(displayPath(file))")
         }
 
         if dryRun {
             if let project = result.detectedXcodeProject, result.registeredXcodeTarget != nil {
-                print("Xcode project: \(project.path)")
+                print("Xcode project: \(displayPath(project))")
             }
             if let target = result.registeredXcodeTarget { print("App target: \(target)") }
             if let target = result.registeredXcodeTestTarget { print("Test target: \(target)") }
@@ -572,7 +579,7 @@ struct Command {
         }
         // Display additional package or Xcode project status
         if let packageRoot = result.createdSwiftPackage {
-            print("\nCreated Swift package: \(packageRoot.path)")
+            print("\nCreated Swift package: \(displayPath(packageRoot))")
         } else {
             if let xcodeProject = result.detectedXcodeProject {
                 print("\nDetected Xcode project: \(xcodeProject.lastPathComponent)")
@@ -588,7 +595,7 @@ struct Command {
             if let packageTarget = result.detectedSwiftPackageTarget {
                 print("\nTargeted Swift package target: \(packageTarget)")
             } else if result.detectedXcodeProject == nil {
-                print("\nNo .xcodeproj found under \(projectPath.path). Files were generated only.")
+                print("\nNo .xcodeproj found under \(displayPath(projectPath)). Files were generated only.")
             }
         }
     }
