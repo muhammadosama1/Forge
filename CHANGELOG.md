@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- Default Swift file headers contain only the filename. Custom header templates can still include the author, project name, and creation date.
+- `forge make` and `forge make --dry-run` show paths relative to the configuration directory, or to the selected project directory when no configuration is present.
+
+### Fixed
+
+- Errors for invalid `architecture`, `binding`, `testing`, and `di` settings list the valid choices without echoing the supplied value.
+
 ## [2.2.0] - 2026-11-22
 
 ### Added
